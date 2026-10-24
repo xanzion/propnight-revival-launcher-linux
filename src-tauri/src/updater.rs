@@ -135,6 +135,40 @@ fn chrono_like_ticks() -> u64 {
         .unwrap_or(0)
 }
 
+
+/// Plan only: count files that differ from the signed manifest. Does not download or patch.
+pub async fn plan_updates(game_root: &str) -> Result<(String, u32), String> {
+    let client = Client::builder()
+        .user_agent("PropnightRevivalLauncher/linux")
+        .timeout(std::time::Duration::from_secs(60))
+        .build()
+        .map_err(|e| e.to_string())?;
+    let manifest = load_manifest(&client).await?;
+    let root = PathBuf::from(game_root);
+    if !root.exists() {
+        return Ok((manifest.version, 0));
+    }
+    let mut count = 0u32;
+    for f in &manifest.files {
+        let path = local_path(&root, &f.path)?;
+        let needs = if path.exists() {
+            match std::fs::metadata(&path) {
+                Ok(meta) if meta.len() == f.size => {
+                    let sha = sha256_file(&path)?;
+                    sha != f.sha256
+                }
+                _ => true,
+            }
+        } else {
+            true
+        };
+        if needs {
+            count += 1;
+        }
+    }
+    Ok((manifest.version, count))
+}
+
 #[command]
 pub async fn check_updates(game_root: String) -> Result<UpdateResult, String> {
     let client = Client::builder()

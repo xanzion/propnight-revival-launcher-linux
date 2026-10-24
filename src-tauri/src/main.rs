@@ -50,6 +50,8 @@ fn main() {
             host::discord_link,
             host::bug,
             host::dlc,
+            host::refresh_server_status,
+            host::check_update_status,
             api::get_me,
             api::get_profile,
             api::post_profile,

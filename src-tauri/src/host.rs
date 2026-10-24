@@ -31,6 +31,10 @@ pub async fn ready(app: AppHandle) -> Result<Value, String> {
         "splash": "Ready"
     });
     emit_state(&app, state.clone());
+    if s.token.is_some() {
+        let _ = refresh_server_status(app.clone()).await;
+        let _ = check_update_status(app.clone()).await;
+    }
     Ok(state)
 }
 
@@ -51,6 +55,8 @@ pub async fn login(app: AppHandle, username: String, password: String) -> Result
             });
             emit_state(&app, state.clone());
             let _ = refresh_me(app.clone()).await;
+            let _ = refresh_server_status(app.clone()).await;
+            let _ = check_update_status(app.clone()).await;
             Ok(json!({
                 "view": "home",
                 "username": username,
@@ -97,6 +103,8 @@ pub async fn register(app: AppHandle, username: String, password: String) -> Res
             });
             emit_state(&app, state.clone());
             let _ = refresh_me(app.clone()).await;
+            let _ = refresh_server_status(app.clone()).await;
+            let _ = check_update_status(app.clone()).await;
             Ok(state)
         }
         Ok(resp) => {
@@ -428,4 +436,74 @@ pub async fn discord_link(_app: AppHandle) -> Result<Value, String> {
 #[command]
 pub async fn dlc(_app: AppHandle, id: String, on: bool) -> Result<Value, String> {
     Ok(json!({ "toast": { "level": "info", "title": "DLC", "text": format!("{id} → {on}") } }))
+}
+
+/// Refresh the "Connecting…" chip by querying /revival/sessions.
+#[command]
+pub async fn refresh_server_status(app: AppHandle) -> Result<Value, String> {
+    let mut s = settings::load_settings().await.unwrap_or_default();
+    if s.token.is_none() {
+        s.token = settings::load_token();
+    }
+    let token = s.token.as_deref();
+    let mut server = json!({ "online": false, "games": 0, "players": 0 });
+    if let Some(t) = token {
+        match api::sessions(t).await {
+            Ok(resp) => {
+                let games = resp.get("sessions").and_then(|v| v.as_array()).cloned().unwrap_or_default();
+                let players: i64 = games.iter().filter_map(|g| g.get("players").and_then(|p| p.as_i64())).sum();
+                server = json!({
+                    "online": true,
+                    "games": games.len(),
+                    "players": players
+                });
+            }
+            Err(_) => {
+                // leave offline
+            }
+        }
+    }
+    let state = json!({ "server": server });
+    emit_state(&app, state.clone());
+    Ok(state)
+}
+
+/// Quiet update check that fills the "Checking for updates…" chip.
+#[command]
+pub async fn check_update_status(app: AppHandle) -> Result<Value, String> {
+    let mut s = settings::load_settings().await.unwrap_or_default();
+    if s.token.is_none() {
+        s.token = settings::load_token();
+    }
+    let install = game::detect_install().await.ok().flatten();
+    let mut update = json!({
+        "checking": false,
+        "error": false,
+        "launcher": null,
+        "version": null,
+        "gameBytes": 0
+    });
+    if let Some(inst) = install {
+        match updater::plan_updates(&inst.root.to_string_lossy()).await {
+            Ok((version, count)) => {
+                update = json!({
+                    "checking": false,
+                    "error": false,
+                    "launcher": null,
+                    "version": version,
+                    "gameBytes": count
+                });
+            }
+            Err(e) => {
+                tracing::warn!("update check failed: {e}");
+                update["error"] = json!(true);
+            }
+        }
+    } else {
+        // no game found – still mark as checked
+        update["version"] = json!("no-game");
+    }
+    let state = json!({ "update": update });
+    emit_state(&app, state.clone());
+    Ok(state)
 }
