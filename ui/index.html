@@ -460,7 +460,8 @@ function applyState(m) {
   debug('state: ' + JSON.stringify(m).slice(0, 300));
   try {
     if (m.toast) toast(m.toast.level || 'info', m.toast.title || '', m.toast.text || '');
-    if (m.type === 'state' || m.view || m.play || m.authError !== undefined || m.friends || m.username !== undefined) {
+    if (m.type === 'state' || m.view || m.play || m.authError !== undefined || m.friends || m.username !== undefined
+        || m.server || m.update || m.dlc || m.servers || m.tab || m.discord || m.gameRoot !== undefined) {
       render(m);
       if (m.view === 'home' && !friendsLoopRunning) startFriendsLoop();
     } else if (m.type === 'toast') {
@@ -969,7 +970,7 @@ function render(s) {
 window.chrome.webview.addEventListener('message', e => {
   const m = e.data;
   try {
-    if (m.type === 'state') render(m);
+    if (m.type === 'state' || m.server || m.update || m.dlc || m.servers || m.play || m.friends) render(m);
     else if (m.type === 'toast') toast(m.level, m.title, m.text, m.ms, m.action);
     else if (m.type === 'bugSent') bugSent(m.ok);
     else if (m.type === 'confirmClose') $('closeModal').classList.add('open');
