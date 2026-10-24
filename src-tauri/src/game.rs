@@ -308,9 +308,10 @@ pub async fn launch_and_wait(root: &str) -> Result<(), String> {
     let src_dll = steamworks.join("steam_api64.dll");
     let win64 = exe.parent().unwrap_or(&root).to_path_buf();
     let dst_dll = win64.join("steam_api64.dll");
-    if src_dll.exists() {
-        let _ = std::fs::copy(&src_dll, &dst_dll);
+    if !src_dll.exists() {
+        return Err("Goldberg steam_api64.dll missing in Steamworks folder. Run PLAY once so the updater installs it.".into());
     }
+    std::fs::copy(&src_dll, &dst_dll).map_err(|e| format!("failed to copy Goldberg DLL: {e}"))?;
     let src_settings = steamworks.join("steam_settings");
     let dst_settings = win64.join("steam_settings");
     if src_settings.exists() {
@@ -334,7 +335,7 @@ pub async fn launch_and_wait(root: &str) -> Result<(), String> {
         .env("SteamAppId", "1549180")
         .env("SteamGameId", "1549180")
         .env("PRESSURE_VESSEL_FILESYSTEMS_RW", &share)
-        .env("WINEDLLOVERRIDES", "steam_api64=n,b")
+        .env("WINEDLLOVERRIDES", "steam_api64=n;steamclient=d;steamclient64=d")
         .env("PROTON_LOG", "1")
         .env("WINEDEBUG", "+loaddll")
         .env_remove("PYTHONHOME")
