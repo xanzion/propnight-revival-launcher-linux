@@ -125,21 +125,16 @@ pub async fn set_identity(root: String, name: String, steam_id: String) -> Resul
 
 fn force_load_goldberg(compat: &Path, dll: &Path) {
     let pfx = compat.join("pfx");
-    let _ = std::fs::create_dir_all(&pfx);
-    let reg = pfx.join("user.reg");
-    let win_path = format!("S:\\\\Propnight\\\\Propnight\\\\Binaries\\\\Win64\\\\steam_api64.dll");
-    let block = format!(
-        "\n[Software\\\\Microsoft\\\\Windows NT\\\\CurrentVersion\\\\Windows] 1234567890\n\
-         #time=1d8c0c0c0c0c0c0\n\
-         \"AppInit_DLLs\"=\"{win_path}\"\n\
-         \"LoadAppInit_DLLs\"=dword:00000001\n\
-         \"RequireSignedAppInit_DLLs\"=dword:00000000\n"
-    );
-    let existing = std::fs::read_to_string(&reg).unwrap_or_else(|_| "WINE REGISTRY Version 2\n".into());
-    if !existing.contains("AppInit_DLLs") {
-        let _ = std::fs::write(&reg, existing + &block);
+    let sys32 = pfx.join("drive_c/windows/system32");
+    let _ = std::fs::create_dir_all(&sys32);
+    if dll.exists() {
+        let _ = std::fs::copy(dll, sys32.join("steam_api64.dll"));
     }
-    let _ = dll;
+    let reg = pfx.join("user.reg");
+    let block = "\n[Software\\\\Microsoft\\\\Windows NT\\\\CurrentVersion\\\\Windows] 1234567890\n#time=1d8c0c0c0c0c0c0\n\"AppInit_DLLs\"=\"C:\\\\windows\\\\system32\\\\steam_api64.dll\"\n\"LoadAppInit_DLLs\"=dword:00000001\n\"RequireSignedAppInit_DLLs\"=dword:00000000\n";
+    let existing = std::fs::read_to_string(&reg).unwrap_or_else(|_| "WINE REGISTRY Version 2\n".into());
+    let cleaned: String = existing.lines().filter(|l| !l.contains("AppInit_DLLs") && !l.contains("LoadAppInit_DLLs") && !l.contains("RequireSignedAppInit")).collect::<Vec<_>>().join("\n");
+    let _ = std::fs::write(&reg, cleaned + block);
 }
 
 fn find_runtime() -> Option<PathBuf> {
