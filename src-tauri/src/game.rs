@@ -190,6 +190,14 @@ pub fn find_proton_public() -> Option<PathBuf> {
     let mut found: Vec<PathBuf> = Vec::new();
     let mut bases = Vec::new();
     if let Some(home) = home_dir() {
+        // Explicit Proton Experimental locations first
+        for p in [
+            home.join(".local/share/Steam/steamapps/common/Proton - Experimental/proton"),
+            home.join(".steam/steam/steamapps/common/Proton - Experimental/proton"),
+            home.join(".var/app/com.valvesoftware.Steam/.local/share/Steam/steamapps/common/Proton - Experimental/proton"),
+        ] {
+            if p.exists() { found.push(p); }
+        }
         bases.push(home.join(".steam/steam/compatibilitytools.d"));
         bases.push(home.join(".local/share/Steam/compatibilitytools.d"));
         bases.push(home.join(".var/app/com.valvesoftware.Steam/.local/share/Steam/compatibilitytools.d"));
@@ -221,13 +229,23 @@ pub fn find_proton_public() -> Option<PathBuf> {
             if !p.is_empty() { found.push(PathBuf::from(p)); }
         }
     }
-    // Prefer Proton Experimental, then Proton-GE, then any other
-    found.sort_by_key(|p| {
+    // Prefer Proton Experimental by directory name, then Proton-GE, then others.
+    // Never prefer umu unless nothing else exists.
+    fn rank(p: &PathBuf) -> u8 {
         let s = p.to_string_lossy().to_lowercase();
-        if s.contains("experimental") { 0 }
-        else if s.contains("ge-") || s.contains("proton-ge") { 1 }
-        else { 2 }
-    });
+        if s.contains("proton - experimental") || s.contains("proton-experimental") || s.contains("/experimental/") {
+            0
+        } else if s.contains("umu") {
+            9  // last resort
+        } else if s.contains("ge-") || s.contains("proton-ge") || s.contains("proton ge") {
+            1
+        } else if s.contains("proton") {
+            2
+        } else {
+            3
+        }
+    }
+    found.sort_by_key(rank);
     found.into_iter().next()
 }
 
