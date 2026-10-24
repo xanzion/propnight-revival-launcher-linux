@@ -1,0 +1,67 @@
+// Prevents additional console window on Windows in release
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
+mod api;
+mod crypto;
+mod game;
+mod host;
+mod settings;
+mod updater;
+
+use tauri::Manager;
+
+fn main() {
+    tracing_subscriber::fmt::init();
+
+    tauri::Builder::default()
+        .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_dialog::init())
+        .setup(|app| {
+            if let Some(window) = app.get_webview_window("main") {
+                window.set_decorations(false).ok();
+            }
+            Ok(())
+        })
+        .invoke_handler(tauri::generate_handler![
+            host::ready,
+            host::login,
+            host::register,
+            host::logout,
+            host::refresh_me,
+            host::refresh_servers,
+            host::friends_poll,
+            host::report,
+            host::match_result,
+            host::list_sessions,
+            host::play,
+            host::minimize,
+            host::maximize,
+            host::close,
+            host::close_anyway,
+            host::drag,
+            host::friend,
+            host::join,
+            host::servers_tab,
+            host::page_error,
+            host::pick_folder,
+            host::open_data,
+            host::uninstall,
+            host::update_launcher,
+            host::discord_link,
+            host::bug,
+            host::dlc,
+            api::get_me,
+            api::get_profile,
+            api::post_profile,
+            api::presence,
+            api::sync_profile,
+            game::detect_install,
+            game::set_identity,
+            game::launch_game,
+            updater::check_updates,
+            settings::load_settings,
+            settings::save_settings
+        ])
+        .run(tauri::generate_context!())
+        .expect("error while running tauri application");
+}

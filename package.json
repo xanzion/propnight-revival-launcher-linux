@@ -1,0 +1,13 @@
+{
+  "name": "propnight-revival-linux",
+  "version": "0.1.0",
+  "description": "Linux-native Propnight Revival launcher (Tauri + Rust)",
+  "scripts": {
+    "tauri": "tauri",
+    "dev": "tauri dev",
+    "build": "tauri build"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2"
+  }
+}
