@@ -181,7 +181,10 @@ pub async fn refresh_servers(app: AppHandle) -> Result<Value, String> {
 pub async fn friends_poll(app: AppHandle, etag: Option<String>) -> Result<Value, String> {
     let mut s = settings::load_settings().await.unwrap_or_default();
     if s.token.is_none() { s.token = settings::load_token(); }
-    let token = s.token.ok_or("not logged in")?;
+    let token = match s.token {
+        Some(t) if !t.is_empty() => t,
+        _ => return Err("not logged in (no token in keyring or settings)".into()),
+    };
     let resp = api::friends_wait(&token, etag.as_deref().unwrap_or("")).await?;
     if let (Some(proof), Some(port), Some(relay)) = (
         resp.get("proof").and_then(|v| v.as_str()),

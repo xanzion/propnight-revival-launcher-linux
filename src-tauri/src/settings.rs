@@ -77,11 +77,12 @@ pub async fn load_settings() -> Result<Settings, String> {
 
 #[command]
 pub async fn save_settings(mut settings: Settings) -> Result<(), String> {
-    // Prefer keyring for the token
+    // Prefer keyring for the token; only clear the file copy if keyring succeeded
     if let Some(t) = settings.token.clone() {
-        let _ = save_token(Some(&t));
-        // Clear from file for security
-        settings.token = None;
+        if save_token(Some(&t)).is_ok() {
+            settings.token = None;
+        }
+        // else: keep token in settings.json as fallback
     } else {
         let _ = save_token(None);
     }
