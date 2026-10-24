@@ -453,6 +453,13 @@ pub async fn join(app: AppHandle, port: Option<u16>, from: Option<String>, dlc: 
     if !(7800..=7999).contains(&port) {
         return Ok(json!({ "toast": { "level": "warn", "title": "Join", "text": "Invalid port" } }));
     }
+
+    // Busy guard
+    static BUSY: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    if BUSY.load(std::sync::atomic::Ordering::SeqCst) {
+        return Ok(json!({ "toast": { "level": "warn", "title": "Not now", "text": "Wait until the current task is finished." } }));
+    }
+
     let install = game::detect_install().await.ok().flatten();
     let Some(install) = install else {
         return Ok(json!({ "toast": { "level": "warn", "title": "Join", "text": "Game not found" } }));
@@ -470,14 +477,42 @@ pub async fn join(app: AppHandle, port: Option<u16>, from: Option<String>, dlc: 
         }
     }
 
+    // Address proof so private games accept us
+    if let Some(token) = settings::current_token() {
+        if let Ok(me) = api::me(&token).await {
+            let proof = me.get("proof").and_then(|v| v.as_str())
+                .or_else(|| me.pointer("/you/proof").and_then(|v| v.as_str()));
+            let proof_port = me.get("proofPort").and_then(|v| v.as_u64())
+                .or_else(|| me.pointer("/you/proofPort").and_then(|v| v.as_u64()));
+            let relay = me.get("relayHost").and_then(|v| v.as_str())
+                .or_else(|| me.pointer("/account/relayHost").and_then(|v| v.as_str()))
+                .or_else(|| me.pointer("/account/relays/0/host").and_then(|v| v.as_str()));
+            if let (Some(p), Some(pp), Some(r)) = (proof, proof_port, relay) {
+                send_address_proof(r, p, pp as u16);
+            }
+        }
+    }
+
     let cmd = format!("joinrelay {}", port);
     let _ = std::fs::write(win64.join("revival-map-command.txt"), &cmd);
 
-    // If game already running, the mod will pick it up; otherwise launch
-    // (simple check: look for Propnight.exe in process list is heavy; just launch if not already in play)
+    // Already running: just write the command and let the mod connect
+    let running = std::process::Command::new("pgrep")
+        .arg("-f")
+        .arg("Propnight.exe")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false);
+    if running {
+        return Ok(json!({ "toast": { "level": "good", "title": format!("Joining {}", from.as_deref().unwrap_or("your friend")), "text": "Propnight is connecting to the game." } }));
+    }
+
+    // Otherwise launch
+    BUSY.store(true, std::sync::atomic::Ordering::SeqCst);
     let state = json!({ "toast": { "level": "info", "title": format!("Joining {}", from.as_deref().unwrap_or("your friend")), "text": "Propnight starts, then joins the game." } });
     emit_state(&app, state.clone());
     let _ = play(app).await;
+    BUSY.store(false, std::sync::atomic::Ordering::SeqCst);
     Ok(state)
 }
 
