@@ -143,38 +143,55 @@ fn find_runtime() -> Option<PathBuf> {
     None
 }
 
+fn find_umu() -> Option<PathBuf> {
+    if let Ok(out) = Command::new("which").arg("umu-run").output() {
+        if out.status.success() {
+            let p = String::from_utf8_lossy(&out.stdout).trim().to_string();
+            if !p.is_empty() { return Some(PathBuf::from(p)); }
+        }
+    }
+    None
+}
+
 pub async fn launch_and_wait(root: &str) -> Result<(), String> {
     let root = PathBuf::from(root);
     let exe = root.join(EXE_RELATIVE);
     if !exe.exists() {
         return Err("Propnight.exe not found".into());
     }
-    let proton = find_proton_public().ok_or("Could not find Proton Experimental.")?;
+    let proton = find_proton_public().ok_or("Could not find Proton.")?;
     let compat = find_or_create_compat(&root)?;
     let steam = steam_candidates().into_iter().next().unwrap_or_else(|| PathBuf::from("."));
-    let runtime = find_runtime();
+    let log_path = directories::BaseDirs::new()
+        .map(|b| b.config_dir().join("PropnightRevival").join("proton.log"))
+        .unwrap_or_else(|| PathBuf::from("proton.log"));
+    if let Some(parent) = log_path.parent() { let _ = std::fs::create_dir_all(parent); }
 
-    // Launch via the Steam Linux Runtime so Proton has the same container
-    // Steam uses, but without steam -applaunch (so Goldberg handles matchmaking).
-    let mut cmd = if let Some(rt) = &runtime {
+    // Prefer umu-run (designed to run Proton outside Steam with the full runtime).
+    // Fall back to SteamLinuxRuntime wrapper, then raw proton.
+    let mut cmd = if let Some(umu) = find_umu() {
+        let mut c = Command::new(umu);
+        c.env("PROTONPATH", proton.parent().unwrap_or(&proton));
+        c.env("GAMEID", "umu-1549180");
+        c.env("WINEPREFIX", compat.join("pfx"));
+        c.arg(&exe);
+        c
+    } else if let Some(rt) = find_runtime() {
         let mut c = Command::new(rt);
-        c.arg("--verb=run").arg("--").arg(&proton);
+        c.arg("--verb=run").arg("--").arg(&proton).arg("run").arg(&exe);
         c
     } else {
-        // Fallback: run proton directly
-        Command::new("python3")
+        let mut c = Command::new("python3");
+        c.arg(&proton).arg("run").arg(&exe);
+        c
     };
-    if runtime.is_none() {
-        cmd.arg(&proton);
-    }
-    cmd.arg("run")
-        .arg(&exe)
-        .env("STEAM_COMPAT_DATA_PATH", &compat)
+    cmd.env("STEAM_COMPAT_DATA_PATH", &compat)
         .env("STEAM_COMPAT_CLIENT_INSTALL_PATH", &steam)
         .env("STEAM_COMPAT_INSTALL_PATH", &root)
         .env("STEAM_COMPAT_APP_ID", "1549180")
         .env("SteamAppId", "1549180")
         .env("SteamGameId", "1549180")
+        .env("PROTON_LOG", "1")
         .env_remove("PYTHONHOME")
         .env_remove("PYTHONPATH")
         .env_remove("PYTHONSAFEPATH")
@@ -188,11 +205,13 @@ pub async fn launch_and_wait(root: &str) -> Result<(), String> {
         .await.map_err(|e| e.to_string())?
         .map_err(|e| e.to_string())?;
 
+    let combined = format!("{}
+{}", String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr));
+    let _ = std::fs::write(&log_path, &combined);
+
     if !output.status.success() {
-        let err = String::from_utf8_lossy(&output.stderr);
-        let out = String::from_utf8_lossy(&output.stdout);
-        let msg = if !err.trim().is_empty() { err } else { out };
-        return Err(format!("Proton exited {}: {}", output.status, msg.trim().chars().take(800).collect::<String>()));
+        let tail: String = combined.trim().chars().rev().take(600).collect::<String>().chars().rev().collect();
+        return Err(format!("Proton exited {}. Log: {}. …{}", output.status, log_path.display(), tail));
     }
     Ok(())
 }
