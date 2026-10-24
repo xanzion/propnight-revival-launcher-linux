@@ -122,6 +122,26 @@ pub async fn set_identity(root: String, name: String, steam_id: String) -> Resul
 
 
 /// Launch via Proton and wait for the process to exit.
+
+fn force_load_goldberg(compat: &Path, dll: &Path) {
+    let pfx = compat.join("pfx");
+    let _ = std::fs::create_dir_all(&pfx);
+    let reg = pfx.join("user.reg");
+    let win_path = format!("S:\\\\Propnight\\\\Propnight\\\\Binaries\\\\Win64\\\\steam_api64.dll");
+    let block = format!(
+        "\n[Software\\\\Microsoft\\\\Windows NT\\\\CurrentVersion\\\\Windows] 1234567890\n\
+         #time=1d8c0c0c0c0c0c0\n\
+         \"AppInit_DLLs\"=\"{win_path}\"\n\
+         \"LoadAppInit_DLLs\"=dword:00000001\n\
+         \"RequireSignedAppInit_DLLs\"=dword:00000000\n"
+    );
+    let existing = std::fs::read_to_string(&reg).unwrap_or_else(|_| "WINE REGISTRY Version 2\n".into());
+    if !existing.contains("AppInit_DLLs") {
+        let _ = std::fs::write(&reg, existing + &block);
+    }
+    let _ = dll;
+}
+
 fn find_runtime() -> Option<PathBuf> {
     let mut bases = Vec::new();
     if let Some(home) = home_dir() {
@@ -350,6 +370,9 @@ os.environ["WINEDLLOVERRIDES"] = "steam_api64=n;dwmapi=n,b;steamclient=d;steamcl
     }
     let _ = std::fs::write(win64.join("steam_appid.txt"), "1549180");
     let _ = std::fs::write(steamworks.join("steam_appid.txt"), "1549180");
+    // Game crashes at +0x181A576 without ever calling LoadLibrary("steam_api64").
+    // Force-load Goldberg via AppInit_DLLs so it is in the process before that call.
+    force_load_goldberg(&compat, &dst_dll);
     // Game may live on a separate mount (e.g. /home/user/storage1).
     // Pressure-vessel refuses "parent for game drive" unless that path is shared.
     let share = root.parent().unwrap_or(&root).to_string_lossy().to_string();
