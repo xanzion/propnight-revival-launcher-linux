@@ -129,8 +129,10 @@ pub async fn launch_and_wait(root: &str) -> Result<(), String> {
     let compat = find_or_create_compat(&root)?;
     let steam = steam_candidates().into_iter().next().unwrap_or_else(|| PathBuf::from("."));
 
-    // Proton's script is often not +x; run it via bash to be safe
-    let mut cmd = Command::new("bash");
+    // Proton Experimental's "proton" is a Python script (shebang python3).
+    // Running it with bash makes bash interpret "import" as ImageMagick.
+    // Prefer python3 explicitly; fall back to executing the script directly.
+    let mut cmd = Command::new("python3");
     cmd.arg(&proton)
         .arg("run")
         .arg(&exe)
