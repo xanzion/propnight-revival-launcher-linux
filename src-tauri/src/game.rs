@@ -126,45 +126,47 @@ pub async fn launch_and_wait(root: &str) -> Result<(), String> {
     if !exe.exists() {
         return Err("Propnight.exe not found".into());
     }
-    let proton = find_proton_public().ok_or("Could not find Proton Experimental. Install it through Steam.")?;
-    let compat = find_or_create_compat(&root)?;
-    let steam = steam_candidates().into_iter().next().unwrap_or_else(|| PathBuf::from("."));
 
-    // Launch the exe directly via Proton (not steam -applaunch).
-    // The revival replaces steam_api64.dll with Goldberg; the real Steam client
-    // conflicts with it and the game sticks on "Initializing Matchmaking".
-    // Proton Experimental's proton file is a Python script.
-    let mut cmd = Command::new("python3");
-    cmd.arg(&proton)
-        .arg("run")
-        .arg(&exe)
-        .env("STEAM_COMPAT_DATA_PATH", &compat)
-        .env("STEAM_COMPAT_CLIENT_INSTALL_PATH", &steam)
-        .env("STEAM_COMPAT_APP_ID", "1549180")
-        .env("SteamAppId", "1549180")
-        .env("SteamGameId", "1549180")
-        // The AppImage sets PYTHONHOME/PYTHONPATH to its own mount.
-        // Clear them so Proton's python3 uses the system interpreter.
+    // Launch through Steam. Direct Proton is missing the Steam Linux Runtime,
+    // pressure-vessel, and other env Steam sets, which is why the game crashes
+    // (exit 5 / access violation) when we start it ourselves but works from Steam.
+    let mut cmd = Command::new("steam");
+    cmd.arg("-applaunch")
+        .arg("1549180")
         .env_remove("PYTHONHOME")
         .env_remove("PYTHONPATH")
         .env_remove("PYTHONSAFEPATH")
-        .env_remove("PYTHONSTARTUP")
-        .current_dir(exe.parent().unwrap_or(&root))
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped());
+        .env_remove("PYTHONSTARTUP");
 
-    let child = cmd.spawn().map_err(|e| format!("failed to spawn Proton ({}): {e}", proton.display()))?;
-    let output = tokio::task::spawn_blocking(move || child.wait_with_output())
-        .await
-        .map_err(|e| e.to_string())?
-        .map_err(|e| e.to_string())?;
+    let mut child = cmd.spawn().map_err(|e| format!("failed to start Steam: {e}. Is Steam installed and in PATH?"))?;
 
-    if !output.status.success() {
-        let err = String::from_utf8_lossy(&output.stderr);
-        let out = String::from_utf8_lossy(&output.stdout);
-        let msg = if !err.trim().is_empty() { err } else { out };
-        return Err(format!("Proton exited {}: {}", output.status, msg.trim().chars().take(1200).collect::<String>()));
+    // steam -applaunch returns immediately; wait for the game process.
+    let started = tokio::task::spawn_blocking(|| {
+        for _ in 0..90 {
+            std::thread::sleep(std::time::Duration::from_secs(1));
+            if std::process::Command::new("pgrep").arg("-f").arg("Propnight.exe")
+                .output().map(|o| o.status.success()).unwrap_or(false) {
+                return true;
+            }
+        }
+        false
+    }).await.map_err(|e| e.to_string())?;
+
+    if !started {
+        let _ = child.kill();
+        return Err("Steam did not start Propnight.exe. Make sure Steam is running and the game is installed.".into());
     }
+
+    // Wait for the game to exit so profile sync still runs
+    tokio::task::spawn_blocking(|| {
+        loop {
+            std::thread::sleep(std::time::Duration::from_secs(2));
+            let running = std::process::Command::new("pgrep").arg("-f").arg("Propnight.exe")
+                .output().map(|o| o.status.success()).unwrap_or(false);
+            if !running { break; }
+        }
+    }).await.map_err(|e| e.to_string())?;
+
     Ok(())
 }
 
