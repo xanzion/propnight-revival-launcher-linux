@@ -209,12 +209,17 @@ pub async fn launch_and_wait(root: &str) -> Result<(), String> {
     if src_dll.exists() {
         let _ = std::fs::copy(&src_dll, &dst_dll);
     }
+    // Game may live on a separate mount (e.g. /home/user/storage1).
+    // Pressure-vessel refuses "parent for game drive" unless that path is shared.
+    let share = root.parent().unwrap_or(&root).to_string_lossy().to_string();
     cmd.env("STEAM_COMPAT_DATA_PATH", &compat)
         .env("STEAM_COMPAT_CLIENT_INSTALL_PATH", &steam)
         .env("STEAM_COMPAT_INSTALL_PATH", &root)
+        .env("STEAM_COMPAT_LIBRARY_PATHS", &share)
         .env("STEAM_COMPAT_APP_ID", "1549180")
         .env("SteamAppId", "1549180")
         .env("SteamGameId", "1549180")
+        .env("PRESSURE_VESSEL_FILESYSTEMS_RW", &share)
         .env("WINEDLLOVERRIDES", "steam_api64=n,b;steamclient=d;steamclient64=d")
         .env("PROTON_LOG", "1")
         .env_remove("PYTHONHOME")
