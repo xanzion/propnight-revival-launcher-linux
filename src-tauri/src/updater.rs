@@ -3,7 +3,7 @@ use base64::{engine::general_purpose::STANDARD, Engine};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
-use tauri::command;
+use tauri::{command, Emitter, Manager};
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ManifestFile {
@@ -178,6 +178,7 @@ pub async fn check_updates(game_root: String) -> Result<UpdateResult, String> {
 
     let mut todo = Vec::new();
     for f in &manifest.files {
+        if f.dlc.is_some() { continue; }  // DLC files are installed only via install_dlc
         let path = local_path(&root, &f.path)?;
         let needs = if path.exists() {
             match std::fs::metadata(&path) {
@@ -228,6 +229,59 @@ pub async fn check_updates(game_root: String) -> Result<UpdateResult, String> {
         message: format!("Updated {} file(s) to manifest {}", todo.len(), manifest.version),
         version: Some(manifest.version),
     })
+}
+
+
+/// Download only the files belonging to a DLC pack.
+pub async fn install_dlc(game_root: &str, dlc_id: &str, app: &tauri::AppHandle) -> Result<u32, String> {
+    let client = Client::builder()
+        .user_agent("PropnightRevivalLauncher/linux")
+        .timeout(std::time::Duration::from_secs(300))
+        .build()
+        .map_err(|e| e.to_string())?;
+    let manifest = load_manifest(&client).await?;
+    let root = PathBuf::from(game_root);
+    if !root.exists() {
+        return Err("game root does not exist".into());
+    }
+    let files: Vec<_> = manifest.files.iter().filter(|f| f.dlc.as_deref() == Some(dlc_id)).collect();
+    if files.is_empty() {
+        return Err(format!("no files for DLC {dlc_id}"));
+    }
+    let total = files.len();
+    let mut done = 0u32;
+    for f in files {
+        done += 1;
+        let path = local_path(&root, &f.path)?;
+        // skip if already correct
+        let needs = if path.exists() {
+            match std::fs::metadata(&path) {
+                Ok(meta) if meta.len() == f.size => {
+                    let sha = sha256_file(&path)?;
+                    sha != f.sha256
+                }
+                _ => true,
+            }
+        } else {
+            true
+        };
+        if !needs { continue; }
+        let tmp = path.with_extension("download");
+        let url = format!("{}{}", manifest.files_url, f.sha256);
+        // progress
+        if let Some(w) = app.get_webview_window("main") {
+            let _ = w.emit("state", &serde_json::json!({
+                "play": { "title": "DOWNLOADING", "sub": format!("{} ({}/{})", std::path::Path::new(&f.path).file_name().and_then(|n| n.to_str()).unwrap_or(&f.path), done, total), "busy": true, "disabled": true, "progress": done as f64 / total as f64 }
+            }));
+        }
+        download_file(&client, &url, &tmp, &f.sha256).await?;
+        backup(&root, &f.path)?;
+        if path.exists() {
+            std::fs::remove_file(&path).map_err(|e| e.to_string())?;
+        }
+        std::fs::rename(&tmp, &path).map_err(|e| e.to_string())?;
+    }
+    Ok(done)
 }
 
 fn apply_exe_patch(root: &Path, patch: &ExePatch) -> Result<(), String> {

@@ -615,14 +615,16 @@ pub async fn dlc(app: AppHandle, id: String, on: bool) -> Result<Value, String> 
     let root = install.root.to_string_lossy().to_string();
 
     if on {
-        emit_state(&app, json!({ "play": { "title": "DOWNLOADING", "sub": format!("Installing {}", id), "busy": true, "disabled": true, "progress": -1 } }));
-        match updater::check_updates(root).await {
-            Ok(u) => {
+        emit_state(&app, json!({ "tab": "home", "play": { "title": "DOWNLOADING", "sub": format!("Installing {}", id), "busy": true, "disabled": true, "progress": -1 } }));
+        match updater::install_dlc(&root, &id, &app).await {
+            Ok(n) => {
                 let _ = send_dlc_state(&app).await;
-                Ok(json!({ "toast": { "level": "good", "title": format!("{} installed", id), "text": format!("{} file(s)", u.files_changed) } }))
+                emit_state(&app, json!({ "play": { "title": "PLAY", "sub": "DLC installed", "busy": false, "disabled": false } }));
+                Ok(json!({ "toast": { "level": "good", "title": format!("{} installed", id), "text": format!("{} file(s)", n) } }))
             }
             Err(e) => {
                 let _ = send_dlc_state(&app).await;
+                emit_state(&app, json!({ "play": { "title": "PLAY", "sub": "DLC install failed", "busy": false, "disabled": false } }));
                 Ok(json!({ "toast": { "level": "bad", "title": "DLC download failed", "text": e } }))
             }
         }
