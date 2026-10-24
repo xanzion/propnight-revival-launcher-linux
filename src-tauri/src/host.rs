@@ -3,6 +3,7 @@
 //! Commands return objects that the existing `render()` function understands.
 
 use crate::{api, game, settings, updater};
+use base64::engine::general_purpose::STANDARD;
 use serde_json::{json, Value};
 use tauri::{command, AppHandle, Emitter, Manager, WebviewWindow};
 
@@ -35,6 +36,7 @@ pub async fn ready(app: AppHandle) -> Result<Value, String> {
         let _ = refresh_server_status(app.clone()).await;
         let _ = check_update_status(app.clone()).await;
         let _ = send_dlc_state(&app).await;
+        start_background(app.clone()).await;
     }
     Ok(state)
 }
@@ -181,6 +183,13 @@ pub async fn friends_poll(app: AppHandle, etag: Option<String>) -> Result<Value,
     if s.token.is_none() { s.token = settings::load_token(); }
     let token = s.token.ok_or("not logged in")?;
     let resp = api::friends_wait(&token, etag.as_deref().unwrap_or("")).await?;
+    if let (Some(proof), Some(port), Some(relay)) = (
+        resp.get("proof").and_then(|v| v.as_str()),
+        resp.get("proofPort").and_then(|v| v.as_u64()),
+        resp.pointer("/account/relayHost").and_then(|v| v.as_str()).or_else(|| resp.get("relayHost").and_then(|v| v.as_str())),
+    ) {
+        send_address_proof(relay, proof, port as u16);
+    }
     let state = json!({
         "friends": resp,
         "etag": resp.get("etag")
@@ -308,6 +317,20 @@ pub async fn maximize(app: AppHandle) -> Result<(), String> {
 
 #[command]
 pub async fn close(app: AppHandle) -> Result<(), String> {
+    // If a game process is likely running, ask the UI to confirm
+    let install = game::detect_install().await.ok().flatten();
+    let running = install.as_ref().map(|i| {
+        std::process::Command::new("pgrep")
+            .arg("-f")
+            .arg("Propnight.exe")
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false)
+    }).unwrap_or(false);
+    if running {
+        emit_state(&app, json!({ "type": "confirmClose" }));
+        return Ok(());
+    }
     if let Some(w) = window(&app) {
         w.close().map_err(|e| e.to_string())?;
     }
@@ -369,9 +392,37 @@ pub async fn friend(app: AppHandle, action: String, username: Option<String>, co
 }
 
 #[command]
-pub async fn join(_app: AppHandle, port: Option<u16>, from: Option<String>) -> Result<Value, String> {
-    // Joining is handled by the game/mod; launcher just records intent for now.
-    Ok(json!({ "toast": { "level": "info", "title": "Join", "text": format!("Joining {} on port {}", from.unwrap_or_default(), port.unwrap_or(0)) } }))
+pub async fn join(app: AppHandle, port: Option<u16>, from: Option<String>, dlc: Option<bool>, map: Option<String>) -> Result<Value, String> {
+    let port = port.unwrap_or(0);
+    if !(7800..=7999).contains(&port) {
+        return Ok(json!({ "toast": { "level": "warn", "title": "Join", "text": "Invalid port" } }));
+    }
+    let install = game::detect_install().await.ok().flatten();
+    let Some(install) = install else {
+        return Ok(json!({ "toast": { "level": "warn", "title": "Join", "text": "Game not found" } }));
+    };
+    let win64 = install.root.join("Propnight/Binaries/Win64");
+    let _ = std::fs::create_dir_all(&win64);
+
+    // Classic maps check
+    if dlc.unwrap_or(false) {
+        let s = settings::load_settings().await.unwrap_or_default();
+        if !s.dlc.get("classic-maps").copied().unwrap_or(false) {
+            let _ = std::fs::write(win64.join("revival-map-command.txt"), format!("missingmaps {}", map.as_deref().unwrap_or("")));
+            emit_state(&app, json!({ "tab": "dlc" }));
+            return Ok(json!({ "toast": { "level": "warn", "title": "Classic maps needed", "text": format!("{} plays on a classic map. Install Classic maps in the DLC tab.", from.as_deref().unwrap_or("Your friend")) } }));
+        }
+    }
+
+    let cmd = format!("joinrelay {}", port);
+    let _ = std::fs::write(win64.join("revival-map-command.txt"), &cmd);
+
+    // If game already running, the mod will pick it up; otherwise launch
+    // (simple check: look for Propnight.exe in process list is heavy; just launch if not already in play)
+    let state = json!({ "toast": { "level": "info", "title": format!("Joining {}", from.as_deref().unwrap_or("your friend")), "text": "Propnight starts, then joins the game." } });
+    emit_state(&app, state.clone());
+    let _ = play(app).await;
+    Ok(state)
 }
 
 #[command(rename = "serversTab")]
@@ -407,17 +458,50 @@ pub async fn pick_folder(app: AppHandle) -> Result<Value, String> {
 
 #[command]
 pub async fn open_data(_app: AppHandle) -> Result<(), String> {
+    if let Some(dir) = directories::BaseDirs::new().map(|b| b.config_dir().join("PropnightRevival")) {
+        let _ = std::fs::create_dir_all(&dir);
+        let _ = std::process::Command::new("xdg-open").arg(&dir).spawn();
+    }
     Ok(())
 }
 
 #[command]
-pub async fn uninstall(_app: AppHandle) -> Result<Value, String> {
-    Ok(json!({ "toast": { "level": "info", "title": "Uninstall", "text": "Not yet implemented" } }))
+pub async fn uninstall(app: AppHandle) -> Result<Value, String> {
+    let install = game::detect_install().await.ok().flatten();
+    let Some(install) = install else {
+        return Ok(json!({ "toast": { "level": "info", "title": "Nothing to uninstall", "text": "No Propnight folder is set." } }));
+    };
+    let root = &install.root;
+    let backups = root.join("revival-backups");
+    if !backups.exists() {
+        return Ok(json!({ "toast": { "level": "warn", "title": "Uninstall", "text": "No backups found. Use Steam Verify integrity if needed." } }));
+    }
+    // Restore every file from revival-backups
+    let mut restored = 0;
+    for entry in walkdir::WalkDir::new(&backups).into_iter().filter_map(|e| e.ok()) {
+        if entry.file_type().is_file() {
+            let rel = entry.path().strip_prefix(&backups).unwrap();
+            let dest = root.join(rel);
+            if let Some(parent) = dest.parent() { let _ = std::fs::create_dir_all(parent); }
+            if std::fs::copy(entry.path(), &dest).is_ok() { restored += 1; }
+        }
+    }
+    let _ = std::fs::remove_dir_all(&backups);
+    // Remove mod files
+    let win64 = root.join("Propnight/Binaries/Win64");
+    for name in ["dwmapi.dll", "revival-relay.txt", "revival-map-command.txt", "revival-presence.txt", "revival-social.txt", "revival-social-actions.txt"] {
+        let _ = std::fs::remove_file(win64.join(name));
+    }
+    let _ = std::fs::remove_dir_all(win64.join("ue4ss"));
+    let state = json!({ "toast": { "level": "good", "title": "Revival uninstalled", "text": format!("Restored {} file(s). Press PLAY to reinstall.", restored) } });
+    emit_state(&app, state.clone());
+    Ok(state)
 }
 
 #[command(rename = "updateLauncher")]
 pub async fn update_launcher(_app: AppHandle) -> Result<Value, String> {
-    Ok(json!({ "toast": { "level": "info", "title": "Launcher", "text": "No launcher self-update yet" } }))
+    // AppImage self-replace is not yet automated. Direct the user.
+    Ok(json!({ "toast": { "level": "info", "title": "Launcher update", "text": "Download the latest AppImage from the releases page and replace this one." } }))
 }
 
 #[command]
@@ -425,7 +509,13 @@ pub async fn bug(app: AppHandle, category: String, text: String) -> Result<Value
     let mut s = settings::load_settings().await.unwrap_or_default();
     if s.token.is_none() { s.token = settings::load_token(); }
     if let Some(token) = s.token {
-        match api::post_bug(&token, &category, &text, None).await {
+        let logs_b64 = if let Some(dir) = directories::BaseDirs::new().map(|b| b.config_dir().join("PropnightRevival")) {
+            let log = dir.join("launcher.log");
+            if log.exists() {
+                std::fs::read(&log).ok().map(|b| STANDARD.encode(b))
+            } else { None }
+        } else { None };
+        match api::post_bug(&token, &category, &text, logs_b64.as_deref()).await {
             Ok(_) => {
                 let state = json!({ "type": "bugSent", "ok": true, "toast": { "level": "good", "title": "Bug report sent", "text": "Thanks!" } });
                 emit_state(&app, state.clone());
@@ -582,4 +672,94 @@ pub async fn check_update_status(app: AppHandle) -> Result<Value, String> {
     let state = json!({ "update": update });
     emit_state(&app, state.clone());
     Ok(state)
+}
+
+/// Read Win64/revival-presence.txt and POST presence.
+async fn push_presence() {
+    let mut s = settings::load_settings().await.unwrap_or_default();
+    if s.token.is_none() { s.token = settings::load_token(); }
+    let Some(token) = s.token else { return };
+    let install = game::detect_install().await.ok().flatten();
+    let (in_game, role, server) = if let Some(inst) = install {
+        let path = inst.root.join("Propnight/Binaries/Win64/revival-presence.txt");
+        if path.exists() {
+            if let Ok(text) = std::fs::read_to_string(&path) {
+                let mut role = "menu".to_string();
+                let mut server = String::new();
+                for line in text.lines() {
+                    if let Some((k, v)) = line.split_once('=') {
+                        match k.trim() {
+                            "role" => role = v.trim().to_string(),
+                            "server" => server = v.trim().to_string(),
+                            _ => {}
+                        }
+                    }
+                }
+                (true, role, server)
+            } else { (false, "menu".into(), String::new()) }
+        } else { (false, "menu".into(), String::new()) }
+    } else { (false, "menu".into(), String::new()) };
+    let _ = api::presence(token, in_game, role, server).await;
+}
+
+/// Process Win64/revival-social-actions.txt written by the mod.
+async fn process_social_actions() {
+    let mut s = settings::load_settings().await.unwrap_or_default();
+    if s.token.is_none() { s.token = settings::load_token(); }
+    let Some(token) = s.token else { return };
+    let install = game::detect_install().await.ok().flatten();
+    let Some(inst) = install else { return };
+    let path = inst.root.join("Propnight/Binaries/Win64/revival-social-actions.txt");
+    if !path.exists() { return }
+    let taken = path.with_extension("taken");
+    let _ = std::fs::rename(&path, &taken);
+    if let Ok(text) = std::fs::read_to_string(&taken) {
+        for line in text.lines().take(10) {
+            let mut parts = line.trim().splitn(2, ' ');
+            let action = parts.next().unwrap_or("").to_lowercase();
+            let username = parts.next().unwrap_or("");
+            if ["invite", "accept", "decline", "leave", "kick"].contains(&action.as_str()) {
+                let _ = api::squad(&token, &action, username).await;
+            }
+        }
+    }
+    let _ = std::fs::remove_file(&taken);
+}
+
+/// Send UDP address proof so private games accept this client.
+fn send_address_proof(relay_host: &str, proof: &str, port: u16) {
+    use std::net::UdpSocket;
+    if proof.len() < 32 { return }
+    let mut bytes = [0u8; 17];
+    bytes[0] = b'P';
+    for i in 0..16 {
+        if let Ok(b) = u8::from_str_radix(&proof[i*2..i*2+2], 16) {
+            bytes[i+1] = b;
+        }
+    }
+    if let Ok(sock) = UdpSocket::bind("0.0.0.0:0") {
+        let _ = sock.send_to(&bytes, format!("{}:{}", relay_host, port));
+        let _ = sock.send_to(&bytes, format!("{}:{}", relay_host, port));
+    }
+}
+
+/// Background maintenance: presence, social actions, periodic status.
+pub async fn start_background(app: AppHandle) {
+    tokio::spawn(async move {
+        loop {
+            push_presence().await;
+            process_social_actions().await;
+            // Server status every ~30s, update check every ~60s
+            use std::sync::atomic::{AtomicU32, Ordering};
+            static COUNTER: AtomicU32 = AtomicU32::new(0);
+            let c = COUNTER.fetch_add(1, Ordering::Relaxed);
+            if c % 6 == 0 {
+                let _ = refresh_server_status(app.clone()).await;
+            }
+            if c % 12 == 0 {
+                let _ = check_update_status(app.clone()).await;
+            }
+            tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+        }
+    });
 }
