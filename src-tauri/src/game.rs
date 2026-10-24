@@ -196,12 +196,21 @@ pub async fn launch_and_wait(root: &str) -> Result<(), String> {
         c.arg(&proton).arg("run").arg(&exe);
         c
     };
+    // Unreal loads steam_api64.dll from the Steamworks path, but Wine often
+    // fails to find it unless it is also next to the exe. Copy Goldberg there
+    // and force Wine to use the native (game) DLL.
+    let src_dll = root.join("Engine/Binaries/ThirdParty/Steamworks/Steamv147/Win64/steam_api64.dll");
+    let dst_dll = exe.parent().unwrap_or(&root).join("steam_api64.dll");
+    if src_dll.exists() {
+        let _ = std::fs::copy(&src_dll, &dst_dll);
+    }
     cmd.env("STEAM_COMPAT_DATA_PATH", &compat)
         .env("STEAM_COMPAT_CLIENT_INSTALL_PATH", &steam)
         .env("STEAM_COMPAT_INSTALL_PATH", &root)
         .env("STEAM_COMPAT_APP_ID", "1549180")
         .env("SteamAppId", "1549180")
         .env("SteamGameId", "1549180")
+        .env("WINEDLLOVERRIDES", "steam_api64=n,b")
         .env("PROTON_LOG", "1")
         .env_remove("PYTHONHOME")
         .env_remove("PYTHONPATH")
