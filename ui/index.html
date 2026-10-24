@@ -419,7 +419,7 @@ body.maximized .grip{display:none}
 
 <div class="toasts" id="toasts"></div>
 <div id="debugPanel" style="position:fixed;bottom:8px;left:8px;right:8px;max-height:160px;overflow:auto;background:rgba(0,0,0,.9);color:#9cdef2;font:12px/1.4 monospace;padding:8px 10px;border-radius:8px;z-index:9999;display:none;border:1px solid #9cdef2">
-  <div style="display:flex;justify-content:space-between;margin-bottom:4px"><b>DEBUG</b><span onclick="this.parentElement.parentElement.style.display='none'" style="cursor:pointer">×</span></div>
+  <div style="display:flex;justify-content:space-between;margin-bottom:4px"><b>DEBUG</b><span onclick="setDebugVisible(false)" style="cursor:pointer">×</span></div>
   <div id="debugLog">Ready</div>
 </div>
 <div class="grip n" data-edge="top"></div><div class="grip s" data-edge="bottom"></div><div class="grip w" data-edge="left"></div><div class="grip e" data-edge="right"></div>
@@ -432,11 +432,18 @@ const send = (cmd, data = {}) => window.chrome.webview.postMessage({ cmd, ...dat
 const invoke = (...a) => (window.__TAURI__?.core?.invoke ?? (() => Promise.resolve()))(...a);
 const listen = window.__TAURI__?.event?.listen;
 
+let debugVisible = false;
+function setDebugVisible(on) {
+  debugVisible = on;
+  const panel = document.getElementById('debugPanel');
+  if (panel) panel.style.display = on ? 'block' : 'none';
+  try { sessionStorage.setItem('debugVisible', on ? '1' : '0'); } catch {}
+}
 function debug(msg) {
   const panel = document.getElementById('debugPanel');
   const log = document.getElementById('debugLog');
   if (!panel || !log) return;
-  panel.style.display = 'block';
+  if (debugVisible) panel.style.display = 'block';
   const line = document.createElement('div');
   line.textContent = new Date().toLocaleTimeString() + '  ' + msg;
   log.appendChild(line);
@@ -447,6 +454,7 @@ function debug(msg) {
 // restore debug log after reload
 document.addEventListener('DOMContentLoaded', () => {
   try {
+    if (sessionStorage.getItem('debugVisible') === '1') setDebugVisible(true);
     const prev = sessionStorage.getItem('debugLog');
     if (prev) {
       const log = document.getElementById('debugLog');
@@ -560,8 +568,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
 document.addEventListener('keydown', e => {
   if (e.key === 'F12' || (e.ctrlKey && e.key === '`')) {
-    const p = document.getElementById('debugPanel');
-    if (p) p.style.display = p.style.display === 'none' ? 'block' : 'none';
+    setDebugVisible(!debugVisible);
   }
 });
 
