@@ -125,7 +125,7 @@ pub async fn launch_and_wait(root: &str) -> Result<(), String> {
     if !exe.exists() {
         return Err("Propnight.exe not found".into());
     }
-    let proton = find_proton().ok_or("Could not find a Proton installation. Install Proton-GE or use Steam's Proton.")?;
+    let proton = find_proton_public().ok_or("Could not find a Proton installation. Install Proton-GE or use Steam's Proton.")?;
     let compat = find_or_create_compat(&root)?;
     let mut child = Command::new(&proton)
         .env("STEAM_COMPAT_DATA_PATH", &compat)
@@ -154,7 +154,7 @@ pub async fn launch_game(root: String) -> Result<String, String> {
     }
 
     // Try to locate a Proton binary (common locations)
-    let proton = find_proton().ok_or("Could not find a Proton installation. Install Proton-GE or use Steam's Proton.")?;
+    let proton = find_proton_public().ok_or("Could not find a Proton installation. Install Proton-GE or use Steam's Proton.")?;
 
     // Prefer the game's own compatdata if it exists, otherwise create a dedicated one
     let compat = find_or_create_compat(&root)?;
@@ -171,17 +171,17 @@ pub async fn launch_game(root: String) -> Result<String, String> {
     Ok(format!("Launched via Proton (pid {})", status.id()))
 }
 
-fn find_proton() -> Option<PathBuf> {
-    let home = home_dir()?;
-    let mut bases = vec![
-        home.join(".steam/steam/compatibilitytools.d"),
-        home.join(".local/share/Steam/compatibilitytools.d"),
-        home.join(".var/app/com.valvesoftware.Steam/.local/share/Steam/compatibilitytools.d"),
-        home.join(".steam/steam/steamapps/common"),
-        home.join(".local/share/Steam/steamapps/common"),
-        home.join(".var/app/com.valvesoftware.Steam/.local/share/Steam/steamapps/common"),
-    ];
-    // Also search libraryfolders
+pub fn find_proton_public() -> Option<PathBuf> {
+    let mut found: Vec<PathBuf> = Vec::new();
+    let mut bases = Vec::new();
+    if let Some(home) = home_dir() {
+        bases.push(home.join(".steam/steam/compatibilitytools.d"));
+        bases.push(home.join(".local/share/Steam/compatibilitytools.d"));
+        bases.push(home.join(".var/app/com.valvesoftware.Steam/.local/share/Steam/compatibilitytools.d"));
+        bases.push(home.join(".steam/steam/steamapps/common"));
+        bases.push(home.join(".local/share/Steam/steamapps/common"));
+        bases.push(home.join(".var/app/com.valvesoftware.Steam/.local/share/Steam/steamapps/common"));
+    }
     for steam in steam_candidates() {
         bases.push(steam.join("compatibilitytools.d"));
         bases.push(steam.join("steamapps/common"));
@@ -190,14 +190,11 @@ fn find_proton() -> Option<PathBuf> {
         if let Ok(entries) = std::fs::read_dir(&base) {
             for entry in entries.flatten() {
                 let proton = entry.path().join("proton");
-                if proton.exists() {
-                    return Some(proton);
-                }
-                // Some Proton builds put the script one level deeper
+                if proton.exists() { found.push(proton); }
                 if let Ok(sub) = std::fs::read_dir(entry.path()) {
                     for s in sub.flatten() {
                         let p = s.path().join("proton");
-                        if p.exists() { return Some(p); }
+                        if p.exists() { found.push(p); }
                     }
                 }
             }
@@ -206,10 +203,17 @@ fn find_proton() -> Option<PathBuf> {
     if let Ok(out) = Command::new("which").arg("proton").output() {
         if out.status.success() {
             let p = String::from_utf8_lossy(&out.stdout).trim().to_string();
-            if !p.is_empty() { return Some(PathBuf::from(p)); }
+            if !p.is_empty() { found.push(PathBuf::from(p)); }
         }
     }
-    None
+    // Prefer Proton Experimental, then Proton-GE, then any other
+    found.sort_by_key(|p| {
+        let s = p.to_string_lossy().to_lowercase();
+        if s.contains("experimental") { 0 }
+        else if s.contains("ge-") || s.contains("proton-ge") { 1 }
+        else { 2 }
+    });
+    found.into_iter().next()
 }
 
 fn find_or_create_compat(game_root: &Path) -> Result<PathBuf, String> {

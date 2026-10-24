@@ -266,13 +266,20 @@ pub async fn play(app: AppHandle) -> Result<Value, String> {
     let root = install.root.to_string_lossy().to_string();
     let win64 = install.root.join("Propnight/Binaries/Win64");
 
-    // 1. Update (best-effort; do not block launch)
-    emit_state(&app, json!({ "play": { "title": "UPDATING", "sub": "Checking files…", "busy": true, "disabled": true, "progress": -1 } }));
+    // 1. Install / update revival files (required, same as original)
+    emit_state(&app, json!({ "play": { "title": "UPDATING", "sub": "Checking revival files…", "busy": true, "disabled": true, "progress": -1 } }));
     let update = updater::check_updates(root.clone()).await;
     let update_msg = match &update {
         Ok(u) if !u.up_to_date => format!("Updated {} files", u.files_changed),
         Ok(_) => "Up to date".into(),
-        Err(e) => format!("Update skipped: {e}"),
+        Err(e) => {
+            let state = json!({
+                "play": { "title": "PLAY", "sub": format!("Update failed: {}", e), "disabled": false, "busy": false },
+                "toast": { "level": "bad", "title": "Could not install revival files", "text": e }
+            });
+            emit_state(&app, state.clone());
+            return Ok(state);
+        }
     };
 
     // 2. Identity
@@ -297,7 +304,8 @@ pub async fn play(app: AppHandle) -> Result<Value, String> {
     // pending join is handled by the join command writing the file before calling play
 
     // 5. Launch and wait
-    emit_state(&app, json!({ "play": { "title": "STARTING", "sub": "Launching Propnight…", "busy": true, "disabled": true, "progress": -1 } }));
+    let proton_name = game::find_proton_public().map(|p| p.to_string_lossy().to_string()).unwrap_or_else(|| "Proton".into());
+    emit_state(&app, json!({ "play": { "title": "STARTING", "sub": format!("Launching via {}", proton_name), "busy": true, "disabled": true, "progress": -1 } }));
     // Profile watch while game runs
     let token_watch = token.clone();
     let root_watch = root.clone();
