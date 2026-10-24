@@ -83,32 +83,14 @@ fn backup(root: &Path, relative: &str) -> Result<(), String> {
 }
 
 async fn download_file(client: &Client, url: &str, target: &Path, expected_sha: &str) -> Result<(), String> {
-    download_file_progress(client, url, target, expected_sha, &mut |_| {}).await
-}
-
-async fn download_file_progress(
-    client: &Client,
-    url: &str,
-    target: &Path,
-    expected_sha: &str,
-    progress: &mut dyn FnMut(f64),
-) -> Result<(), String> {
     if let Some(parent) = target.parent() {
         std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
     let resp = client.get(url).send().await.map_err(|e| e.to_string())?.error_for_status().map_err(|e| e.to_string())?;
-    let total = resp.content_length().unwrap_or(0);
-    let mut stream = resp.bytes_stream();
-    let mut got = Vec::new();
-    use futures_util::StreamExt;
-    while let Some(chunk) = stream.next().await {
-        let chunk = chunk.map_err(|e| e.to_string())?;
-        got.extend_from_slice(&chunk);
-        if total > 0 { progress(got.len() as f64 / total as f64); }
-    }
-    std::fs::write(target, &got).map_err(|e| e.to_string())?;
-    let sha = sha256_file(target)?;
-    if sha != expected_sha {
+    let bytes = resp.bytes().await.map_err(|e| e.to_string())?;
+    std::fs::write(target, &bytes).map_err(|e| e.to_string())?;
+    let got = sha256_file(target)?;
+    if got != expected_sha {
         let _ = std::fs::remove_file(target);
         return Err(format!("checksum mismatch for {target:?}"));
     }

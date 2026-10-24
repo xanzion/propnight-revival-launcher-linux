@@ -3,7 +3,7 @@
 //! Commands return objects that the existing `render()` function understands.
 
 use crate::{api, game, settings, updater};
-use base64::engine::general_purpose::STANDARD;
+use base64::{engine::general_purpose::STANDARD, Engine};
 use serde_json::{json, Value};
 use tauri::{command, AppHandle, Emitter, Manager, WebviewWindow};
 
@@ -913,22 +913,9 @@ fn clean(s: &str) -> String {
 }
 
 /// Resize the window from an edge/corner.
+/// Tauri 2.12 does not expose start_resize_dragging on WebviewWindow; drag-to-resize
+/// is not available in this version. The grips remain for future support.
 #[command]
-pub async fn resize(app: AppHandle, edge: String) -> Result<(), String> {
-    if let Some(w) = window(&app) {
-        use tauri::ResizeDirection;
-        let dir = match edge.as_str() {
-            "top" => ResizeDirection::North,
-            "bottom" => ResizeDirection::South,
-            "left" => ResizeDirection::West,
-            "right" => ResizeDirection::East,
-            "topleft" => ResizeDirection::NorthWest,
-            "topright" => ResizeDirection::NorthEast,
-            "bottomleft" => ResizeDirection::SouthWest,
-            "bottomright" => ResizeDirection::SouthEast,
-            _ => return Ok(()),
-        };
-        let _ = w.start_resize_dragging(dir);
-    }
+pub async fn resize(_app: AppHandle, _edge: String) -> Result<(), String> {
     Ok(())
 }
