@@ -519,14 +519,25 @@ pub fn find_proton_public() -> Option<PathBuf> {
 }
 
 fn find_or_create_compat(game_root: &Path) -> Result<PathBuf, String> {
-    // Look for existing Propnight compatdata (AppID 1549180)
+    // Prefer the prefix Steam already uses for 1549180 (works from the Steam UI).
+    let mut candidates = Vec::new();
     for steam in steam_candidates() {
-        let compat = steam.join("steamapps/compatdata/1549180");
-        if compat.exists() {
-            return Ok(compat);
+        candidates.push(steam.join("steamapps/compatdata/1549180"));
+        if let Ok(libs) = std::fs::read_to_string(steam.join("steamapps/libraryfolders.vdf")) {
+            for lib in parse_libraryfolders(&steam.join("steamapps/libraryfolders.vdf")) {
+                candidates.push(lib.join("steamapps/compatdata/1549180"));
+            }
         }
     }
-    // Fallback: dedicated prefix next to the game
+    // Also next to the game library itself
+    if let Some(lib) = game_root.parent().and_then(|p| p.parent()) {
+        candidates.push(lib.join("compatdata/1549180"));
+    }
+    for c in candidates {
+        if c.join("pfx").exists() || c.exists() {
+            return Ok(c);
+        }
+    }
     let fallback = game_root.join(".proton-prefix");
     std::fs::create_dir_all(&fallback).map_err(|e| e.to_string())?;
     Ok(fallback)
