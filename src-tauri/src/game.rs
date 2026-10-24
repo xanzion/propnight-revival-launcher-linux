@@ -142,6 +142,12 @@ pub async fn launch_and_wait(root: &str) -> Result<(), String> {
         .env("STEAM_COMPAT_APP_ID", "1549180")
         .env("SteamAppId", "1549180")
         .env("SteamGameId", "1549180")
+        // The AppImage sets PYTHONHOME/PYTHONPATH to its own mount.
+        // Clear them so Proton's python3 uses the system interpreter.
+        .env_remove("PYTHONHOME")
+        .env_remove("PYTHONPATH")
+        .env_remove("PYTHONSAFEPATH")
+        .env_remove("PYTHONSTARTUP")
         .current_dir(exe.parent().unwrap_or(&root))
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped());
