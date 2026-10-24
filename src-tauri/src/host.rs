@@ -304,8 +304,7 @@ pub async fn play(app: AppHandle) -> Result<Value, String> {
     // pending join is handled by the join command writing the file before calling play
 
     // 5. Launch and wait
-    let proton_name = game::find_proton_public().map(|p| p.to_string_lossy().to_string()).unwrap_or_else(|| "Proton".into());
-    emit_state(&app, json!({ "play": { "title": "STARTING", "sub": format!("Launching via {}", proton_name), "busy": true, "disabled": true, "progress": -1 } }));
+    emit_state(&app, json!({ "play": { "title": "STARTING", "sub": "Launching via Steam…", "busy": true, "disabled": true, "progress": -1 } }));
     // Profile watch while game runs
     let token_watch = token.clone();
     let root_watch = root.clone();
