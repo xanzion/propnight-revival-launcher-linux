@@ -272,6 +272,14 @@ pub async fn launch_and_wait(root: &str) -> Result<(), String> {
     let ge = ensure_ge_proton(None).await?;
     let proton = ge.join("proton");
     let compat = find_or_create_compat(&root)?;
+    // Proton user_settings.py forces the Goldberg DLL even if the env is dropped.
+    let user_settings = r#"# Force Goldberg steam_api64 (native only) and disable real steamclient
+import os
+os.environ["WINEDLLOVERRIDES"] = "steam_api64=n;steamclient=d;steamclient64=d"
+"#;
+    let _ = std::fs::write(ge.join("user_settings.py"), user_settings);
+    let _ = std::fs::create_dir_all(&compat);
+    let _ = std::fs::write(compat.join("user_settings.py"), user_settings);
     let steam = steam_candidates().into_iter().next().unwrap_or_else(|| PathBuf::from("."));
     let log_path = directories::BaseDirs::new()
         .map(|b| b.config_dir().join("PropnightRevival").join("proton.log"))
