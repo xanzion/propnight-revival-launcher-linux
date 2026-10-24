@@ -229,8 +229,7 @@ pub async fn launch_and_wait(root: &str) -> Result<(), String> {
         .await.map_err(|e| e.to_string())?
         .map_err(|e| e.to_string())?;
 
-    let combined = format!("{}
-{}", String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr));
+    let combined = format!("PROTONPATH={}\n{}\n{}", proton_dir.display(), String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr));
     let _ = std::fs::write(&log_path, &combined);
 
     if !output.status.success() {
