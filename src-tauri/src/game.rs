@@ -125,21 +125,36 @@ pub async fn launch_and_wait(root: &str) -> Result<(), String> {
     if !exe.exists() {
         return Err("Propnight.exe not found".into());
     }
-    let proton = find_proton_public().ok_or("Could not find a Proton installation. Install Proton-GE or use Steam's Proton.")?;
+    let proton = find_proton_public().ok_or("Could not find a Proton installation. Install Proton Experimental or Proton-GE through Steam.")?;
     let compat = find_or_create_compat(&root)?;
-    let mut child = Command::new(&proton)
-        .env("STEAM_COMPAT_DATA_PATH", &compat)
-        .env("STEAM_COMPAT_CLIENT_INSTALL_PATH", steam_candidates().first().unwrap_or(&PathBuf::from(".")).to_string_lossy().to_string())
+    let steam = steam_candidates().into_iter().next().unwrap_or_else(|| PathBuf::from("."));
+
+    // Proton's script is often not +x; run it via bash to be safe
+    let mut cmd = Command::new("bash");
+    cmd.arg(&proton)
         .arg("run")
         .arg(&exe)
+        .env("STEAM_COMPAT_DATA_PATH", &compat)
+        .env("STEAM_COMPAT_CLIENT_INSTALL_PATH", &steam)
+        .env("STEAM_COMPAT_APP_ID", "1549180")
+        .env("SteamAppId", "1549180")
+        .env("SteamGameId", "1549180")
         .current_dir(exe.parent().unwrap_or(&root))
-        .spawn()
-        .map_err(|e| format!("failed to spawn Proton: {e}"))?;
-    // Wait on a blocking thread so we don't block the async runtime
-    tokio::task::spawn_blocking(move || child.wait())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+
+    let mut child = cmd.spawn().map_err(|e| format!("failed to spawn Proton ({}): {e}", proton.display()))?;
+    let output = tokio::task::spawn_blocking(move || child.wait_with_output())
         .await
         .map_err(|e| e.to_string())?
         .map_err(|e| e.to_string())?;
+
+    if !output.status.success() {
+        let err = String::from_utf8_lossy(&output.stderr);
+        let out = String::from_utf8_lossy(&output.stdout);
+        let msg = if !err.trim().is_empty() { err } else { out };
+        return Err(format!("Proton exited {}: {}", output.status, msg.trim().chars().take(300).collect::<String>()));
+    }
     Ok(())
 }
 
