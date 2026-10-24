@@ -428,6 +428,7 @@ body.maximized .grip{display:none}
 <script>
 // Tauri bridge for the existing WebView2-style UI
 const $ = id => document.getElementById(id);
+const send = (cmd, data = {}) => window.chrome.webview.postMessage({ cmd, ...data });
 const invoke = (...a) => (window.__TAURI__?.core?.invoke ?? (() => Promise.resolve()))(...a);
 const listen = window.__TAURI__?.event?.listen;
 
