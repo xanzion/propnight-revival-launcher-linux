@@ -154,12 +154,33 @@ fn ge_proton_dir() -> PathBuf {
 
 /// Download and extract the latest GE-Proton into the XDG data dir.
 /// Returns the directory that contains the `proton` script.
-async fn ensure_ge_proton(app: Option<&tauri::AppHandle>) -> Result<PathBuf, String> {
+fn find_existing_ge() -> Option<PathBuf> {
     let dest = ge_proton_dir();
-    let proton = dest.join("proton");
-    if proton.exists() {
-        return Ok(dest);
+    if dest.join("proton").exists() {
+        return Some(dest);
     }
+    // Also accept a versioned folder left by a previous extract
+    if let Some(parent) = dest.parent() {
+        if let Ok(entries) = std::fs::read_dir(parent) {
+            for e in entries.flatten() {
+                let p = e.path();
+                if p.is_dir()
+                    && p.file_name().and_then(|n| n.to_str()).unwrap_or("").starts_with("GE-Proton")
+                    && p.join("proton").exists()
+                {
+                    return Some(p);
+                }
+            }
+        }
+    }
+    None
+}
+
+async fn ensure_ge_proton(app: Option<&tauri::AppHandle>) -> Result<PathBuf, String> {
+    if let Some(existing) = find_existing_ge() {
+        return Ok(existing);
+    }
+    let dest = ge_proton_dir();
     if let Some(app) = app {
         if let Some(w) = app.get_webview_window("main") {
             let _ = w.emit("state", &serde_json::json!({
