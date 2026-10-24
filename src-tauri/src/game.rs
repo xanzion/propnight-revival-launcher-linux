@@ -275,7 +275,7 @@ pub async fn launch_and_wait(root: &str) -> Result<(), String> {
     // Proton user_settings.py forces the Goldberg DLL even if the env is dropped.
     let user_settings = r#"# Force Goldberg steam_api64 (native only) and disable real steamclient
 import os
-os.environ["WINEDLLOVERRIDES"] = "steam_api64=n;steamclient=d;steamclient64=d"
+os.environ["WINEDLLOVERRIDES"] = "steam_api64=n;dwmapi=n;steamclient=d;steamclient64=d"
 "#;
     let _ = std::fs::write(ge.join("user_settings.py"), user_settings);
     let _ = std::fs::create_dir_all(&compat);
@@ -354,7 +354,7 @@ os.environ["WINEDLLOVERRIDES"] = "steam_api64=n;steamclient=d;steamclient64=d"
         .env("SteamAppId", "1549180")
         .env("SteamGameId", "1549180")
         .env("PRESSURE_VESSEL_FILESYSTEMS_RW", &share)
-        .env("WINEDLLOVERRIDES", "steam_api64=n;steamclient=d;steamclient64=d")
+        .env("WINEDLLOVERRIDES", "steam_api64=n;dwmapi=n;steamclient=d;steamclient64=d")
         .env("PROTON_LOG", "1")
         .env("WINEDEBUG", "+loaddll")
         .env_remove("PYTHONHOME")
