@@ -247,7 +247,7 @@ body.maximized .grip{display:none}
   letter-spacing:.08em;font-size:12px;transition:.18s;backdrop-filter:blur(18px)}
 .navtab:hover{color:var(--ink)}.navtab.on{background:var(--grad) border-box;border-color:transparent;color:#fff;box-shadow:0 8px 24px var(--glow)}
 .dlcpanel{display:none;flex:1;min-height:0;overflow-y:auto;padding-right:6px}
-.dlcpanel.on{display:none;animation:in .35s ease}
+.dlcpanel.on{display:block;animation:in .35s ease}
 .dlcpanel::-webkit-scrollbar{width:6px}.dlcpanel::-webkit-scrollbar-thumb{background:rgba(255,255,255,.12);border-radius:9px}
 .pack{padding:22px;margin-bottom:16px}
 /* public games (SERVERS tab) */
@@ -462,6 +462,7 @@ function applyState(m) {
     if (m.toast) toast(m.toast.level || 'info', m.toast.title || '', m.toast.text || '');
     if (m.type === 'state' || m.view || m.play || m.authError !== undefined || m.friends || m.username !== undefined) {
       render(m);
+      if (m.view === 'home' && !friendsLoopRunning) startFriendsLoop();
     } else if (m.type === 'toast') {
       toast(m.level, m.title, m.text, m.ms, m.action);
     }
@@ -529,6 +530,24 @@ async function windowAction(action) {
   } catch (e) {
     console.warn(action, e);
     send(action); // fall back to host command
+  }
+}
+
+let friendsEtag = '';
+let friendsLoopRunning = false;
+async function startFriendsLoop() {
+  if (friendsLoopRunning) return;
+  friendsLoopRunning = true;
+  debug('starting friends loop');
+  while (true) {
+    try {
+      const res = await invoke('friends_poll', { etag: friendsEtag });
+      if (res && res.etag) friendsEtag = res.etag;
+      if (res && res.friends) applyState({ friends: res.friends });
+    } catch (e) {
+      debug('friends poll: ' + e);
+      await new Promise(r => setTimeout(r, 3000));
+    }
   }
 }
 
@@ -797,6 +816,7 @@ function confirmUninstall(el) {
 }
 
 // ---- home tabs + DLC (optional content: classic maps)
+let serversTimer = null;
 function showTab(t) {
   $('tabHome').classList.toggle('on', t === 'home');
   $('tabServers').classList.toggle('on', t === 'servers');
@@ -804,7 +824,12 @@ function showTab(t) {
   $('welcomePanel').style.display = t === 'home' ? '' : 'none';
   $('dlcPanel').classList.toggle('on', t === 'dlc');
   $('serversPanel').classList.toggle('on', t === 'servers');
-  send('serversTab', { on: t === 'servers' });   // the list is fetched every few seconds while it is shown
+  send('serversTab', { on: t === 'servers' });
+  if (serversTimer) { clearInterval(serversTimer); serversTimer = null; }
+  if (t === 'servers') {
+    serversTimer = setInterval(() => send('serversTab', { on: true }), 5000);
+  }
+  if (t === 'dlc') send('dlcRefresh');
 }
 // public games (quick play lobbies): roles and ranks of who is in them, never names
 function renderServers(list) {

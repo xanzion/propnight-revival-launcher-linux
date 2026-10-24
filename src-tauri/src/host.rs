@@ -34,6 +34,7 @@ pub async fn ready(app: AppHandle) -> Result<Value, String> {
     if s.token.is_some() {
         let _ = refresh_server_status(app.clone()).await;
         let _ = check_update_status(app.clone()).await;
+        let _ = send_dlc_state(&app).await;
     }
     Ok(state)
 }
@@ -57,6 +58,7 @@ pub async fn login(app: AppHandle, username: String, password: String) -> Result
             let _ = refresh_me(app.clone()).await;
             let _ = refresh_server_status(app.clone()).await;
             let _ = check_update_status(app.clone()).await;
+            let _ = send_dlc_state(&app).await;
             Ok(json!({
                 "view": "home",
                 "username": username,
@@ -105,6 +107,7 @@ pub async fn register(app: AppHandle, username: String, password: String) -> Res
             let _ = refresh_me(app.clone()).await;
             let _ = refresh_server_status(app.clone()).await;
             let _ = check_update_status(app.clone()).await;
+            let _ = send_dlc_state(&app).await;
             Ok(state)
         }
         Ok(resp) => {
@@ -433,9 +436,63 @@ pub async fn discord_link(_app: AppHandle) -> Result<Value, String> {
     }
 }
 
+#[command(rename = "dlcRefresh")]
+pub async fn dlc_refresh(app: AppHandle) -> Result<(), String> {
+    send_dlc_state(&app).await
+}
+
 #[command]
-pub async fn dlc(_app: AppHandle, id: String, on: bool) -> Result<Value, String> {
-    Ok(json!({ "toast": { "level": "info", "title": "DLC", "text": format!("{id} → {on}") } }))
+pub async fn dlc(app: AppHandle, id: String, on: bool) -> Result<Value, String> {
+    let mut s = settings::load_settings().await.unwrap_or_default();
+    s.dlc.insert(id.clone(), on);
+    let _ = settings::save_settings(s.clone()).await;
+    // Re-emit DLC list so the toggle reflects immediately
+    let _ = send_dlc_state(&app).await;
+    Ok(json!({
+        "toast": { "level": "good", "title": "DLC", "text": format!("{} {}", id, if on { "enabled" } else { "disabled" }) }
+    }))
+}
+
+/// Load the signed manifest and emit the DLC packs the UI expects.
+async fn send_dlc_state(app: &AppHandle) -> Result<(), String> {
+    let s = settings::load_settings().await.unwrap_or_default();
+    let client = reqwest::Client::builder()
+        .user_agent("PropnightRevivalLauncher/linux")
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+        .map_err(|e| e.to_string())?;
+    let data = client
+        .get(format!("{}?t={}", crate::crypto::MANIFEST_URL, std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis()).unwrap_or(0)))
+        .send().await.map_err(|e| e.to_string())?
+        .bytes().await.map_err(|e| e.to_string())?;
+    let manifest: serde_json::Value = serde_json::from_slice(&data).map_err(|e| e.to_string())?;
+    let files_url = manifest.get("filesUrl").and_then(|v| v.as_str()).unwrap_or("");
+    let packs = manifest.get("dlc").and_then(|v| v.as_array()).cloned().unwrap_or_default();
+    let mut out = Vec::new();
+    for p in packs {
+        let id = p.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+        let maps = p.get("maps").and_then(|v| v.as_array()).cloned().unwrap_or_default();
+        let mut maps_out = Vec::new();
+        for m in maps {
+            let img_sha = m.get("image").and_then(|i| i.get("sha256")).and_then(|v| v.as_str()).unwrap_or("");
+            maps_out.push(json!({
+                "name": m.get("name"),
+                "from": m.get("from"),
+                "image": format!("{}{}", files_url, img_sha)
+            }));
+        }
+        out.push(json!({
+            "id": id,
+            "title": p.get("title"),
+            "description": p.get("description"),
+            "size": p.get("size").and_then(|v| v.as_u64()).unwrap_or(0),
+            "on": s.dlc.get(&id).copied().unwrap_or(false),
+            "maps": maps_out
+        }));
+    }
+    let state = json!({ "dlc": out });
+    emit_state(app, state);
+    Ok(())
 }
 
 /// Refresh the "Connecting…" chip by querying /revival/sessions.
