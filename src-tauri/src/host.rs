@@ -20,7 +20,7 @@ fn window(app: &AppHandle) -> Option<WebviewWindow> {
 #[command]
 pub async fn ready(app: AppHandle) -> Result<Value, String> {
     let mut s = settings::load_settings().await.unwrap_or_default();
-    if s.token.is_none() { s.token = settings::load_token(); }
+    if s.token.is_none() { s.token = settings::current_token(); }
     let install = game::detect_install().await.ok().flatten();
     let view = if s.token.is_some() { "home" } else { "auth" };
     let state = json!({
@@ -50,6 +50,7 @@ pub async fn login(app: AppHandle, username: String, password: String) -> Result
             s.username = Some(username.clone());
             s.steam_id = resp.steam_id.clone();
             let _ = settings::save_settings(s).await;
+            let _ = settings::save_token(resp.token.as_deref());
             let state = json!({
                 "view": "home",
                 "username": username,
@@ -98,6 +99,7 @@ pub async fn register(app: AppHandle, username: String, password: String) -> Res
             s.username = Some(username.clone());
             s.steam_id = resp.steam_id.clone();
             let _ = settings::save_settings(s).await;
+            let _ = settings::save_token(resp.token.as_deref());
             let state = json!({
                 "view": "home",
                 "username": username,
@@ -135,7 +137,7 @@ pub async fn register(app: AppHandle, username: String, password: String) -> Res
 #[command]
 pub async fn logout(app: AppHandle) -> Result<Value, String> {
     let mut s = settings::load_settings().await.unwrap_or_default();
-    if s.token.is_none() { s.token = settings::load_token(); }
+    if s.token.is_none() { s.token = settings::current_token(); }
     if let Some(token) = &s.token {
         let _ = api::logout(token).await;
     }
@@ -152,7 +154,7 @@ pub async fn logout(app: AppHandle) -> Result<Value, String> {
 #[command]
 pub async fn refresh_me(app: AppHandle) -> Result<Value, String> {
     let mut s = settings::load_settings().await.unwrap_or_default();
-    if s.token.is_none() { s.token = settings::load_token(); }
+    if s.token.is_none() { s.token = settings::current_token(); }
     let token = s.token.ok_or("not logged in")?;
     let me = api::me(&token).await?;
     let state = json!({
@@ -168,7 +170,7 @@ pub async fn refresh_me(app: AppHandle) -> Result<Value, String> {
 #[command]
 pub async fn refresh_servers(app: AppHandle) -> Result<Value, String> {
     let mut s = settings::load_settings().await.unwrap_or_default();
-    if s.token.is_none() { s.token = settings::load_token(); }
+    if s.token.is_none() { s.token = settings::current_token(); }
     let Some(token) = s.token.filter(|t| !t.is_empty()) else {
         let state = json!({ "servers": [], "serversError": "not logged in" });
         emit_state(&app, state.clone());
@@ -193,7 +195,7 @@ pub async fn refresh_servers(app: AppHandle) -> Result<Value, String> {
 #[command]
 pub async fn friends_poll(app: AppHandle, etag: Option<String>) -> Result<Value, String> {
     let mut s = settings::load_settings().await.unwrap_or_default();
-    if s.token.is_none() { s.token = settings::load_token(); }
+    if s.token.is_none() { s.token = settings::current_token(); }
     let token = match s.token {
         Some(t) if !t.is_empty() => t,
         _ => return Err("not logged in (no token in keyring or settings)".into()),
@@ -227,7 +229,7 @@ pub async fn friends_poll(app: AppHandle, etag: Option<String>) -> Result<Value,
 #[command]
 pub async fn report(app: AppHandle, report: Value) -> Result<Value, String> {
     let mut s = settings::load_settings().await.unwrap_or_default();
-    if s.token.is_none() { s.token = settings::load_token(); }
+    if s.token.is_none() { s.token = settings::current_token(); }
     let token = s.token.ok_or("not logged in")?;
     let _ = api::post_report(&token, report).await?;
     Ok(json!({ "toast": { "level": "good", "title": "Report sent", "text": "" } }))
@@ -237,7 +239,7 @@ pub async fn report(app: AppHandle, report: Value) -> Result<Value, String> {
 #[command]
 pub async fn match_result(app: AppHandle, match_data: Value) -> Result<Value, String> {
     let mut s = settings::load_settings().await.unwrap_or_default();
-    if s.token.is_none() { s.token = settings::load_token(); }
+    if s.token.is_none() { s.token = settings::current_token(); }
     let token = s.token.ok_or("not logged in")?;
     let _ = api::post_match(&token, match_data).await?;
     Ok(json!({ "toast": { "level": "good", "title": "Match recorded", "text": "" } }))
@@ -247,7 +249,7 @@ pub async fn match_result(app: AppHandle, match_data: Value) -> Result<Value, St
 #[command]
 pub async fn list_sessions(_app: AppHandle) -> Result<Value, String> {
     let mut s = settings::load_settings().await.unwrap_or_default();
-    if s.token.is_none() { s.token = settings::load_token(); }
+    if s.token.is_none() { s.token = settings::current_token(); }
     let token = s.token.ok_or("not logged in")?;
     api::sessions(&token).await
 }
@@ -255,7 +257,7 @@ pub async fn list_sessions(_app: AppHandle) -> Result<Value, String> {
 #[command]
 pub async fn play(app: AppHandle) -> Result<Value, String> {
     let mut s = settings::load_settings().await.unwrap_or_default();
-    if s.token.is_none() { s.token = settings::load_token(); }
+    if s.token.is_none() { s.token = settings::current_token(); }
     let token = s.token.clone().ok_or("not logged in")?;
     let install = game::detect_install().await.map_err(|e| e.to_string())?;
     let Some(install) = install else {
@@ -400,7 +402,7 @@ pub async fn drag(app: AppHandle) -> Result<(), String> {
 #[command]
 pub async fn friend(app: AppHandle, action: String, username: Option<String>, code: Option<String>) -> Result<Value, String> {
     let mut s = settings::load_settings().await.unwrap_or_default();
-    if s.token.is_none() { s.token = settings::load_token(); }
+    if s.token.is_none() { s.token = settings::current_token(); }
     let token = s.token.ok_or("not logged in")?;
     let result = match action.as_str() {
         "request" => {
@@ -554,7 +556,7 @@ pub async fn update_launcher(_app: AppHandle) -> Result<Value, String> {
 #[command]
 pub async fn bug(app: AppHandle, category: String, text: String) -> Result<Value, String> {
     let mut s = settings::load_settings().await.unwrap_or_default();
-    if s.token.is_none() { s.token = settings::load_token(); }
+    if s.token.is_none() { s.token = settings::current_token(); }
     if let Some(token) = s.token {
         let logs_b64 = if let Some(dir) = directories::BaseDirs::new().map(|b| b.config_dir().join("PropnightRevival")) {
             let log = dir.join("launcher.log");
@@ -581,7 +583,7 @@ pub async fn bug(app: AppHandle, category: String, text: String) -> Result<Value
 #[command(rename = "discordLink")]
 pub async fn discord_link(app: AppHandle) -> Result<Value, String> {
     let mut s = settings::load_settings().await.unwrap_or_default();
-    if s.token.is_none() { s.token = settings::load_token(); }
+    if s.token.is_none() { s.token = settings::current_token(); }
     let token = s.token.ok_or("not logged in")?;
     match api::discord_link(&token).await {
         Ok(resp) => {
@@ -705,7 +707,7 @@ async fn send_dlc_state(app: &AppHandle) -> Result<(), String> {
 pub async fn refresh_server_status(app: AppHandle) -> Result<Value, String> {
     let mut s = settings::load_settings().await.unwrap_or_default();
     if s.token.is_none() {
-        s.token = settings::load_token();
+        s.token = settings::current_token();
     }
     let token = s.token.as_deref();
     let mut server = json!({ "online": false, "games": 0, "players": 0 });
@@ -735,7 +737,7 @@ pub async fn refresh_server_status(app: AppHandle) -> Result<Value, String> {
 pub async fn check_update_status(app: AppHandle) -> Result<Value, String> {
     let mut s = settings::load_settings().await.unwrap_or_default();
     if s.token.is_none() {
-        s.token = settings::load_token();
+        s.token = settings::current_token();
     }
     let install = game::detect_install().await.ok().flatten();
     let mut update = json!({
@@ -773,7 +775,7 @@ pub async fn check_update_status(app: AppHandle) -> Result<Value, String> {
 /// Read Win64/revival-presence.txt and POST presence.
 async fn push_presence() {
     let mut s = settings::load_settings().await.unwrap_or_default();
-    if s.token.is_none() { s.token = settings::load_token(); }
+    if s.token.is_none() { s.token = settings::current_token(); }
     let Some(token) = s.token else { return };
     let install = game::detect_install().await.ok().flatten();
     let (in_game, role, server) = if let Some(inst) = install {
@@ -801,7 +803,7 @@ async fn push_presence() {
 /// Process Win64/revival-social-actions.txt written by the mod.
 async fn process_social_actions() {
     let mut s = settings::load_settings().await.unwrap_or_default();
-    if s.token.is_none() { s.token = settings::load_token(); }
+    if s.token.is_none() { s.token = settings::current_token(); }
     let Some(token) = s.token else { return };
     let install = game::detect_install().await.ok().flatten();
     let Some(inst) = install else { return };
@@ -864,7 +866,7 @@ pub async fn start_background(app: AppHandle) {
 /// Watch revival-reports.jsonl and revival-matches.jsonl and post them.
 async fn flush_reports_and_matches() {
     let mut s = settings::load_settings().await.unwrap_or_default();
-    if s.token.is_none() { s.token = settings::load_token(); }
+    if s.token.is_none() { s.token = settings::current_token(); }
     let Some(token) = s.token else { return };
     let install = game::detect_install().await.ok().flatten();
     let Some(inst) = install else { return };

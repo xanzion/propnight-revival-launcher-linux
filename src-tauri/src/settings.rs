@@ -9,7 +9,8 @@ const KEYRING_USER: &str = "token";
 
 #[derive(Debug, Serialize, Deserialize, Default, Clone)]
 pub struct Settings {
-    /// Token is stored in the system keyring when available; this field is for fallback.
+    /// Token is kept in settings.json as the reliable store.
+    /// Keyring is also written when available, but never required.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub token: Option<String>,
     pub game_root: Option<String>,
@@ -31,30 +32,18 @@ fn keyring_entry() -> Result<Entry, String> {
     Entry::new(KEYRING_SERVICE, KEYRING_USER).map_err(|e| e.to_string())
 }
 
-pub fn load_token() -> Option<String> {
-    if let Ok(entry) = keyring_entry() {
-        if let Ok(t) = entry.get_password() {
-            if !t.is_empty() {
-                return Some(t);
-            }
-        }
-    }
-    // fallback
-    load_settings_sync().ok().and_then(|s| s.token)
-}
-
-pub fn save_token(token: Option<&str>) -> Result<(), String> {
+/// Best-effort keyring write. Failures are ignored; the file is the source of truth.
+fn try_keyring_save(token: Option<&str>) {
     if let Ok(entry) = keyring_entry() {
         match token {
-            Some(t) if !t.is_empty() => {
-                let _ = entry.set_password(t);
-            }
-            _ => {
-                let _ = entry.delete_credential();
-            }
+            Some(t) if !t.is_empty() => { let _ = entry.set_password(t); }
+            _ => { let _ = entry.delete_credential(); }
         }
     }
-    Ok(())
+}
+
+fn try_keyring_load() -> Option<String> {
+    keyring_entry().ok().and_then(|e| e.get_password().ok()).filter(|t| !t.is_empty())
 }
 
 fn load_settings_sync() -> Result<Settings, String> {
@@ -66,27 +55,31 @@ fn load_settings_sync() -> Result<Settings, String> {
     serde_json::from_str(&data).map_err(|e| e.to_string())
 }
 
-#[command]
-pub async fn load_settings() -> Result<Settings, String> {
-    let mut s = load_settings_sync().unwrap_or_default();
-    if s.token.is_none() {
-        s.token = load_token();
+/// Single place every command should use to get the current token.
+pub fn current_token() -> Option<String> {
+    // 1. File (reliable)
+    if let Ok(s) = load_settings_sync() {
+        if let Some(t) = s.token.filter(|t| !t.is_empty()) {
+            return Some(t);
+        }
     }
-    Ok(s)
+    // 2. Keyring fallback
+    try_keyring_load()
 }
 
-#[command]
-pub async fn save_settings(mut settings: Settings) -> Result<(), String> {
-    // Prefer keyring for the token; only clear the file copy if keyring succeeded
-    if let Some(t) = settings.token.clone() {
-        if save_token(Some(&t)).is_ok() {
-            settings.token = None;
-        }
-        // else: keep token in settings.json as fallback
-    } else {
-        let _ = save_token(None);
-    }
+pub fn load_token() -> Option<String> {
+    current_token()
+}
 
+pub fn save_token(token: Option<&str>) -> Result<(), String> {
+    try_keyring_save(token);
+    // Always persist in the settings file
+    let mut s = load_settings_sync().unwrap_or_default();
+    s.token = token.filter(|t| !t.is_empty()).map(String::from);
+    save_settings_sync(s)
+}
+
+fn save_settings_sync(settings: Settings) -> Result<(), String> {
     let path = settings_path();
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
@@ -96,4 +89,20 @@ pub async fn save_settings(mut settings: Settings) -> Result<(), String> {
     std::fs::write(&tmp, &data).map_err(|e| e.to_string())?;
     std::fs::rename(&tmp, &path).map_err(|e| e.to_string())?;
     Ok(())
+}
+
+#[command]
+pub async fn load_settings() -> Result<Settings, String> {
+    let mut s = load_settings_sync().unwrap_or_default();
+    if s.token.is_none() {
+        s.token = try_keyring_load();
+    }
+    Ok(s)
+}
+
+#[command]
+pub async fn save_settings(mut settings: Settings) -> Result<(), String> {
+    // Always keep the token in the file. Also try keyring.
+    try_keyring_save(settings.token.as_deref());
+    save_settings_sync(settings)
 }
