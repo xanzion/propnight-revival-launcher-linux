@@ -224,7 +224,7 @@ pub async fn friend_action(token: String, action: String, username: String) -> R
 pub async fn sync_profile(token: String, game_root: String) -> Result<String, String> {
     let c = client()?;
     // On Linux the save is usually under the Proton prefix or ~/.local/share/Propnight
-    let save_path = find_save_path(&game_root)?;
+    let save_path = find_save_path_pub(&game_root)?;
     let local = if save_path.exists() {
         Some(std::fs::read(&save_path).map_err(|e| e.to_string())?)
     } else {
@@ -255,7 +255,7 @@ pub async fn sync_profile(token: String, game_root: String) -> Result<String, St
     }
 }
 
-fn find_save_path(game_root: &str) -> Result<std::path::PathBuf, String> {
+pub fn find_save_path_pub(game_root: &str) -> Result<std::path::PathBuf, String> {
     // Prefer Proton prefix LocalAppData if present
     let _root = std::path::PathBuf::from(game_root);
     if let Some(steam) = crate::game::steam_candidates().into_iter().next() {

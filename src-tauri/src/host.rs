@@ -195,6 +195,15 @@ pub async fn friends_poll(app: AppHandle, etag: Option<String>) -> Result<Value,
         "etag": resp.get("etag")
     });
     emit_state(&app, state.clone());
+    if let Some(inst) = game::detect_install().await.ok().flatten() {
+        write_social_file(&inst.root, &resp);
+    }
+    // Flash window on new invite
+    if resp.get("invites").and_then(|v| v.as_array()).map(|a| !a.is_empty()).unwrap_or(false) {
+        if let Some(w) = window(&app) {
+            let _ = w.request_user_attention(Some(tauri::UserAttentionType::Informational));
+        }
+    }
     Ok(state)
 }
 
@@ -271,10 +280,32 @@ pub async fn play(app: AppHandle) -> Result<Value, String> {
 
     // 5. Launch and wait
     emit_state(&app, json!({ "play": { "title": "STARTING", "sub": "Launching Propnight…", "busy": true, "disabled": true, "progress": -1 } }));
+    // Profile watch while game runs
+    let token_watch = token.clone();
+    let root_watch = root.clone();
+    let watch = tokio::spawn(async move {
+        let mut last_hash = String::new();
+        loop {
+            if let Ok(path) = crate::api::find_save_path_pub(&root_watch) {
+                if path.exists() {
+                    if let Ok(data) = std::fs::read(&path) {
+                        let h = crate::crypto::sha256_bytes(&data);
+                        if h != last_hash {
+                            last_hash = h;
+                            let _ = crate::api::sync_profile(token_watch.clone(), root_watch.clone()).await;
+                        }
+                    }
+                }
+            }
+            tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+        }
+    });
+
     match game::launch_and_wait(&root).await {
         Ok(_) => {
             // 6. After exit: sync profile again
             emit_state(&app, json!({ "play": { "title": "SAVING", "sub": "Saving your profile…", "busy": true, "disabled": true, "progress": -1 } }));
+            watch.abort();
             let _ = api::sync_profile(token, root).await;
             let state = json!({
                 "play": { "title": "PLAY", "sub": "Everything is up to date.", "busy": false, "disabled": false },
@@ -532,14 +563,31 @@ pub async fn bug(app: AppHandle, category: String, text: String) -> Result<Value
 }
 
 #[command(rename = "discordLink")]
-pub async fn discord_link(_app: AppHandle) -> Result<Value, String> {
+pub async fn discord_link(app: AppHandle) -> Result<Value, String> {
     let mut s = settings::load_settings().await.unwrap_or_default();
     if s.token.is_none() { s.token = settings::load_token(); }
     let token = s.token.ok_or("not logged in")?;
     match api::discord_link(&token).await {
         Ok(resp) => {
-            let url = resp.get("url").and_then(|v| v.as_str()).unwrap_or("");
-            Ok(json!({ "toast": { "level": "info", "title": "Discord", "text": format!("Open: {url}") } }))
+            let url = resp.get("url").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            if url.starts_with("https://discord.com/") {
+                let _ = std::process::Command::new("xdg-open").arg(&url).spawn();
+            }
+            emit_state(&app, json!({ "toast": { "level": "info", "title": "Link Discord", "text": "Accept in your browser, then come back here." } }));
+            // Poll for up to 5 minutes
+            let before = api::me(&token).await.ok().and_then(|m| m.get("discord").and_then(|v| v.as_str()).map(String::from));
+            for _ in 0..60 {
+                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                if let Ok(me) = api::me(&token).await {
+                    if let Some(now) = me.get("discord").and_then(|v| v.as_str()) {
+                        if Some(now) != before.as_deref() {
+                            emit_state(&app, json!({ "discord": now, "toast": { "level": "good", "title": "Discord linked", "text": format!("{now} has the Verified role") } }));
+                            return Ok(json!({ "discord": now }));
+                        }
+                    }
+                }
+            }
+            Ok(json!({ "toast": { "level": "warn", "title": "Discord", "text": "Timed out waiting for link" } }))
         }
         Err(e) => Ok(json!({ "toast": { "level": "bad", "title": "Discord", "text": e } })),
     }
@@ -555,11 +603,41 @@ pub async fn dlc(app: AppHandle, id: String, on: bool) -> Result<Value, String> 
     let mut s = settings::load_settings().await.unwrap_or_default();
     s.dlc.insert(id.clone(), on);
     let _ = settings::save_settings(s.clone()).await;
-    // Re-emit DLC list so the toggle reflects immediately
-    let _ = send_dlc_state(&app).await;
-    Ok(json!({
-        "toast": { "level": "good", "title": "DLC", "text": format!("{} {}", id, if on { "enabled" } else { "disabled" }) }
-    }))
+
+    let install = game::detect_install().await.ok().flatten();
+    let Some(install) = install else {
+        let _ = send_dlc_state(&app).await;
+        return Ok(json!({ "toast": { "level": "warn", "title": "DLC", "text": "Game not found" } }));
+    };
+    let root = install.root.to_string_lossy().to_string();
+
+    if on {
+        emit_state(&app, json!({ "play": { "title": "DOWNLOADING", "sub": format!("Installing {}", id), "busy": true, "disabled": true, "progress": -1 } }));
+        match updater::check_updates(root).await {
+            Ok(u) => {
+                let _ = send_dlc_state(&app).await;
+                Ok(json!({ "toast": { "level": "good", "title": format!("{} installed", id), "text": format!("{} file(s)", u.files_changed) } }))
+            }
+            Err(e) => {
+                let _ = send_dlc_state(&app).await;
+                Ok(json!({ "toast": { "level": "bad", "title": "DLC download failed", "text": e } }))
+            }
+        }
+    } else {
+        // Remove files tagged with this dlc
+        if let Ok(client) = reqwest::Client::builder().user_agent("PropnightRevivalLauncher/linux").build() {
+            if let Ok(m) = updater::load_manifest(&client).await {
+                for f in &m.files {
+                    if f.dlc.as_deref() == Some(&id) {
+                        let path = install.root.join(&f.path);
+                        let _ = std::fs::remove_file(&path);
+                    }
+                }
+            }
+        }
+        let _ = send_dlc_state(&app).await;
+        Ok(json!({ "toast": { "level": "good", "title": format!("{} removed", id), "text": "You can install them again at any time." } }))
+    }
 }
 
 /// Load the signed manifest and emit the DLC packs the UI expects.
@@ -749,6 +827,7 @@ pub async fn start_background(app: AppHandle) {
         loop {
             push_presence().await;
             process_social_actions().await;
+            flush_reports_and_matches().await;
             // Server status every ~30s, update check every ~60s
             use std::sync::atomic::{AtomicU32, Ordering};
             static COUNTER: AtomicU32 = AtomicU32::new(0);
@@ -762,4 +841,94 @@ pub async fn start_background(app: AppHandle) {
             tokio::time::sleep(std::time::Duration::from_secs(5)).await;
         }
     });
+}
+
+/// Watch revival-reports.jsonl and revival-matches.jsonl and post them.
+async fn flush_reports_and_matches() {
+    let mut s = settings::load_settings().await.unwrap_or_default();
+    if s.token.is_none() { s.token = settings::load_token(); }
+    let Some(token) = s.token else { return };
+    let install = game::detect_install().await.ok().flatten();
+    let Some(inst) = install else { return };
+    let win64 = inst.root.join("Propnight/Binaries/Win64");
+
+    for (file, kind) in [("revival-reports.jsonl", "report"), ("revival-matches.jsonl", "match")] {
+        let path = win64.join(file);
+        if !path.exists() { continue; }
+        if let Ok(text) = std::fs::read_to_string(&path) {
+            let mut remaining = Vec::new();
+            for line in text.lines() {
+                if line.trim().is_empty() { continue; }
+                if let Ok(v) = serde_json::from_str::<Value>(line) {
+                    let res = if kind == "report" {
+                        api::post_report(&token, v).await
+                    } else {
+                        api::post_match(&token, v).await
+                    };
+                    if res.is_err() {
+                        remaining.push(line.to_string());
+                    }
+                }
+            }
+            if remaining.is_empty() {
+                let _ = std::fs::remove_file(&path);
+            } else {
+                let _ = std::fs::write(&path, remaining.join("\n") + "\n");
+            }
+        }
+    }
+}
+
+/// Write revival-social.txt for the in-game friends/squad widget.
+fn write_social_file(root: &std::path::Path, friends: &Value) {
+    let win64 = root.join("Propnight/Binaries/Win64");
+    let _ = std::fs::create_dir_all(&win64);
+    let mut sb = String::new();
+    if let Some(you) = friends.get("you").and_then(|v| v.get("username")).and_then(|v| v.as_str()) {
+        sb.push_str(&format!("you\t{}\n", clean(you)));
+    }
+    if let Some(list) = friends.get("friends").and_then(|v| v.as_array()) {
+        for fr in list {
+            let name = fr.get("username").and_then(|v| v.as_str()).unwrap_or("");
+            let status = fr.get("status").and_then(|v| v.as_str()).unwrap_or("offline");
+            let online = matches!(status, "playing" | "hosting" | "in_game");
+            sb.push_str(&format!("friend\t{}\t{}\t{}\n", clean(name), if online { 1 } else { 0 }, clean(status)));
+        }
+    }
+    if let Some(squad) = friends.get("squad") {
+        if let Some(members) = squad.get("members").and_then(|v| v.as_array()) {
+            for m in members {
+                let name = m.get("username").and_then(|v| v.as_str()).unwrap_or("");
+                let leader = m.get("leader").and_then(|v| v.as_bool()).unwrap_or(false);
+                let online = m.get("online").and_then(|v| v.as_bool()).unwrap_or(false);
+                sb.push_str(&format!("squad\t{}\t{}\t{}\n", clean(name), if leader { 1 } else { 0 }, if online { 1 } else { 0 }));
+            }
+        }
+    }
+    let _ = std::fs::write(win64.join("revival-social.txt"), sb);
+}
+
+fn clean(s: &str) -> String {
+    s.chars().filter(|c| c.is_ascii_alphanumeric() || *c == '_' || *c == '-').collect()
+}
+
+/// Resize the window from an edge/corner.
+#[command]
+pub async fn resize(app: AppHandle, edge: String) -> Result<(), String> {
+    if let Some(w) = window(&app) {
+        use tauri::ResizeDirection;
+        let dir = match edge.as_str() {
+            "top" => ResizeDirection::North,
+            "bottom" => ResizeDirection::South,
+            "left" => ResizeDirection::West,
+            "right" => ResizeDirection::East,
+            "topleft" => ResizeDirection::NorthWest,
+            "topright" => ResizeDirection::NorthEast,
+            "bottomleft" => ResizeDirection::SouthWest,
+            "bottomright" => ResizeDirection::SouthEast,
+            _ => return Ok(()),
+        };
+        let _ = w.start_resize_dragging(dir);
+    }
+    Ok(())
 }
