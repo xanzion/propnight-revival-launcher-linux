@@ -144,10 +144,21 @@ fn find_runtime() -> Option<PathBuf> {
 }
 
 fn find_umu() -> Option<PathBuf> {
+    // which first
     if let Ok(out) = Command::new("which").arg("umu-run").output() {
         if out.status.success() {
             let p = String::from_utf8_lossy(&out.stdout).trim().to_string();
-            if !p.is_empty() { return Some(PathBuf::from(p)); }
+            if !p.is_empty() && PathBuf::from(&p).exists() { return Some(PathBuf::from(p)); }
+        }
+    }
+    // Common install locations (AppImage PATH is often minimal)
+    if let Some(home) = home_dir() {
+        for p in [
+            home.join(".local/bin/umu-run"),
+            PathBuf::from("/usr/bin/umu-run"),
+            PathBuf::from("/usr/local/bin/umu-run"),
+        ] {
+            if p.exists() { return Some(p); }
         }
     }
     None
