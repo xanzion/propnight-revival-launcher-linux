@@ -187,7 +187,8 @@ pub async fn launch_and_wait(root: &str) -> Result<(), String> {
         // Also set STORE=steam so it treats this as the Steam app.
         c.env("PROTONPATH", &proton_dir);
         c.env("GAMEID", "umu-1549180");
-        c.env("STORE", "steam");
+        // Do not set STORE=steam — that makes umu talk to the Steam client
+        // and the game sticks on Initializing Matchmaking.
         c.env("WINEPREFIX", compat.join("pfx"));
         c.arg(&exe);
         c
@@ -214,7 +215,7 @@ pub async fn launch_and_wait(root: &str) -> Result<(), String> {
         .env("STEAM_COMPAT_APP_ID", "1549180")
         .env("SteamAppId", "1549180")
         .env("SteamGameId", "1549180")
-        .env("WINEDLLOVERRIDES", "steam_api64=n,b")
+        .env("WINEDLLOVERRIDES", "steam_api64=n,b;steamclient=d;steamclient64=d")
         .env("PROTON_LOG", "1")
         .env_remove("PYTHONHOME")
         .env_remove("PYTHONPATH")
