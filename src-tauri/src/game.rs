@@ -125,38 +125,60 @@ pub async fn launch_and_wait(root: &str) -> Result<(), String> {
     if !exe.exists() {
         return Err("Propnight.exe not found".into());
     }
-    let proton = find_proton_public().ok_or("Could not find a Proton installation. Install Proton Experimental or Proton-GE through Steam.")?;
-    let compat = find_or_create_compat(&root)?;
-    let steam = steam_candidates().into_iter().next().unwrap_or_else(|| PathBuf::from("."));
 
-    // Proton Experimental's "proton" is a Python script (shebang python3).
-    // Running it with bash makes bash interpret "import" as ImageMagick.
-    // Prefer python3 explicitly; fall back to executing the script directly.
-    let mut cmd = Command::new("python3");
-    cmd.arg(&proton)
-        .arg("run")
-        .arg(&exe)
-        .env("STEAM_COMPAT_DATA_PATH", &compat)
-        .env("STEAM_COMPAT_CLIENT_INSTALL_PATH", &steam)
-        .env("STEAM_COMPAT_APP_ID", "1549180")
-        .env("SteamAppId", "1549180")
-        .env("SteamGameId", "1549180")
-        .current_dir(exe.parent().unwrap_or(&root))
+    // Launch through Steam so it uses the Proton the user already set
+    // (Proton Experimental, GE, etc.) and the existing compatdata.
+    let mut cmd = Command::new("steam");
+    cmd.arg("-applaunch")
+        .arg("1549180")
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped());
 
-    let mut child = cmd.spawn().map_err(|e| format!("failed to spawn Proton ({}): {e}", proton.display()))?;
-    let output = tokio::task::spawn_blocking(move || child.wait_with_output())
-        .await
-        .map_err(|e| e.to_string())?
-        .map_err(|e| e.to_string())?;
+    let mut child = cmd.spawn().map_err(|e| format!("failed to start Steam: {e}. Is Steam installed and in PATH?"))?;
 
-    if !output.status.success() {
-        let err = String::from_utf8_lossy(&output.stderr);
-        let out = String::from_utf8_lossy(&output.stdout);
-        let msg = if !err.trim().is_empty() { err } else { out };
-        return Err(format!("Proton exited {}: {}", output.status, msg.trim().chars().take(300).collect::<String>()));
+    // steam -applaunch returns quickly; poll for the game process instead.
+    // Wait up to 60s for Propnight.exe to appear, then wait for it to exit.
+    let started = tokio::task::spawn_blocking(|| {
+        for _ in 0..60 {
+            std::thread::sleep(std::time::Duration::from_secs(1));
+            if std::process::Command::new("pgrep")
+                .arg("-f")
+                .arg("Propnight.exe")
+                .output()
+                .map(|o| o.status.success())
+                .unwrap_or(false)
+            {
+                return true;
+            }
+        }
+        false
+    })
+    .await
+    .map_err(|e| e.to_string())?;
+
+    if !started {
+        let _ = child.kill();
+        return Err("Steam did not start Propnight.exe within 60s. Check that the game is installed and Proton is set in Steam.".into());
     }
+
+    // Wait for the game to exit
+    tokio::task::spawn_blocking(|| {
+        loop {
+            std::thread::sleep(std::time::Duration::from_secs(2));
+            let running = std::process::Command::new("pgrep")
+                .arg("-f")
+                .arg("Propnight.exe")
+                .output()
+                .map(|o| o.status.success())
+                .unwrap_or(false);
+            if !running {
+                break;
+            }
+        }
+    })
+    .await
+    .map_err(|e| e.to_string())?;
+
     Ok(())
 }
 
