@@ -316,6 +316,13 @@ os.environ["WINEDLLOVERRIDES"] = "steam_api64=n;dwmapi=n;steamclient=d;steamclie
     let src_dll = steamworks.join("steam_api64.dll");
     let win64 = exe.parent().unwrap_or(&root).to_path_buf();
     let dst_dll = win64.join("steam_api64.dll");
+    // Same as the original: enable revival mods in Mods/mods.txt before launch.
+    let _ = enable_mods(&root, &["PropnightLoginBypasser".into(), "PropnightLocalMap".into()]);
+    let ue4ss = win64.join("UE4SS.dll");
+    let dwmapi = win64.join("dwmapi.dll");
+    if !ue4ss.exists() || !dwmapi.exists() {
+        return Err("UE4SS.dll or dwmapi.dll missing next to Propnight.exe. Run PLAY so the updater installs the revival mods.".into());
+    }
     if !src_dll.exists() {
         return Err("Goldberg steam_api64.dll missing in Steamworks folder. Run PLAY once so the updater installs it.".into());
     }
