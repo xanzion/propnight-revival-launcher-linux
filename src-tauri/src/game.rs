@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use tauri::command;
+use tauri::{command, Emitter, Manager};
 
 const EXE_RELATIVE: &str = "Propnight/Binaries/Win64/Propnight.exe";
 
@@ -145,6 +145,82 @@ fn find_runtime() -> Option<PathBuf> {
     None
 }
 
+
+fn ge_proton_dir() -> PathBuf {
+    directories::BaseDirs::new()
+        .map(|b| b.data_dir().join("PropnightRevival").join("GE-Proton"))
+        .unwrap_or_else(|| PathBuf::from("GE-Proton"))
+}
+
+/// Download and extract the latest GE-Proton into the XDG data dir.
+/// Returns the directory that contains the `proton` script.
+async fn ensure_ge_proton(app: Option<&tauri::AppHandle>) -> Result<PathBuf, String> {
+    let dest = ge_proton_dir();
+    let proton = dest.join("proton");
+    if proton.exists() {
+        return Ok(dest);
+    }
+    if let Some(app) = app {
+        if let Some(w) = app.get_webview_window("main") {
+            let _ = w.emit("state", &serde_json::json!({
+                "play": { "title": "DOWNLOADING", "sub": "Fetching GE-Proton…", "busy": true, "disabled": true, "progress": -1 }
+            }));
+        }
+    }
+    let client = reqwest::Client::builder()
+        .user_agent("PropnightRevivalLauncher/linux")
+        .build()
+        .map_err(|e| e.to_string())?;
+    let rel: serde_json::Value = client
+        .get("https://api.github.com/repos/GloriousEggroll/proton-ge-custom/releases/latest")
+        .send().await.map_err(|e| e.to_string())?
+        .json().await.map_err(|e| e.to_string())?;
+    let asset = rel["assets"].as_array().and_then(|a| {
+        a.iter().find(|x| x["name"].as_str().unwrap_or("").contains("x86_64.tar.gz")
+            && !x["name"].as_str().unwrap_or("").contains("sha"))
+    }).ok_or("no GE-Proton x86_64 asset")?;
+    let url = asset["browser_download_url"].as_str().ok_or("no download url")?;
+    let name = asset["name"].as_str().unwrap_or("GE-Proton.tar.gz");
+    if let Some(app) = app {
+        if let Some(w) = app.get_webview_window("main") {
+            let _ = w.emit("state", &serde_json::json!({
+                "play": { "title": "DOWNLOADING", "sub": format!("Downloading {name}"), "busy": true, "disabled": true, "progress": -1 }
+            }));
+        }
+    }
+    let bytes = client.get(url).send().await.map_err(|e| e.to_string())?
+        .bytes().await.map_err(|e| e.to_string())?;
+    let tmp = dest.with_extension("tar.gz");
+    if let Some(parent) = tmp.parent() { std::fs::create_dir_all(parent).map_err(|e| e.to_string())?; }
+    std::fs::write(&tmp, &bytes).map_err(|e| e.to_string())?;
+    // Extract. GE-Proton archives contain a top-level folder.
+    let status = std::process::Command::new("tar")
+        .args(["-xzf", tmp.to_str().unwrap_or(""), "-C"])
+        .arg(tmp.parent().unwrap_or(Path::new(".")))
+        .status()
+        .map_err(|e| e.to_string())?;
+    if !status.success() { return Err("failed to extract GE-Proton".into()); }
+    let _ = std::fs::remove_file(&tmp);
+    // Find the extracted folder and move/rename to dest
+    if let Some(parent) = tmp.parent() {
+        if let Ok(entries) = std::fs::read_dir(parent) {
+            for e in entries.flatten() {
+                let p = e.path();
+                if p.is_dir() && p.file_name().and_then(|n| n.to_str()).unwrap_or("").starts_with("GE-Proton") && p.join("proton").exists() {
+                    if p != dest {
+                        let _ = std::fs::rename(&p, &dest);
+                    }
+                    break;
+                }
+            }
+        }
+    }
+    if !dest.join("proton").exists() {
+        return Err("GE-Proton extracted but proton script not found".into());
+    }
+    Ok(dest)
+}
+
 fn find_umu() -> Option<PathBuf> {
     // which first
     if let Ok(out) = Command::new("which").arg("umu-run").output() {
@@ -172,7 +248,8 @@ pub async fn launch_and_wait(root: &str) -> Result<(), String> {
     if !exe.exists() {
         return Err("Propnight.exe not found".into());
     }
-    let proton = find_proton_public().ok_or("Could not find Proton.")?;
+    let ge = ensure_ge_proton(None).await?;
+    let proton = ge.join("proton");
     let compat = find_or_create_compat(&root)?;
     let steam = steam_candidates().into_iter().next().unwrap_or_else(|| PathBuf::from("."));
     let log_path = directories::BaseDirs::new()
@@ -182,7 +259,7 @@ pub async fn launch_and_wait(root: &str) -> Result<(), String> {
 
     // Prefer umu-run (designed to run Proton outside Steam with the full runtime).
     // Fall back to SteamLinuxRuntime wrapper, then raw proton.
-    let proton_dir = proton.parent().unwrap_or(&proton).to_path_buf();
+    let proton_dir = ge.clone();
     let mut cmd = if let Some(umu) = find_umu() {
         let mut c = Command::new(umu);
         // umu wants the directory that contains the proton script.

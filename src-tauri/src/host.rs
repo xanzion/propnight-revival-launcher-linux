@@ -304,7 +304,7 @@ pub async fn play(app: AppHandle) -> Result<Value, String> {
     // pending join is handled by the join command writing the file before calling play
 
     // 5. Launch and wait
-    emit_state(&app, json!({ "play": { "title": "STARTING", "sub": "Launching via umu/Proton…", "busy": true, "disabled": true, "progress": -1 } }));
+    emit_state(&app, json!({ "play": { "title": "STARTING", "sub": "Launching via GE-Proton…", "busy": true, "disabled": true, "progress": -1 } }));
     // Profile watch while game runs
     let token_watch = token.clone();
     let root_watch = root.clone();
