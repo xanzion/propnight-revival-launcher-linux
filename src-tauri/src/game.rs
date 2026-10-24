@@ -117,6 +117,32 @@ pub async fn set_identity(root: String, name: String, steam_id: String) -> Resul
     Ok(())
 }
 
+
+/// Launch via Proton and wait for the process to exit.
+pub async fn launch_and_wait(root: &str) -> Result<(), String> {
+    let root = PathBuf::from(root);
+    let exe = root.join(EXE_RELATIVE);
+    if !exe.exists() {
+        return Err("Propnight.exe not found".into());
+    }
+    let proton = find_proton().ok_or("Could not find a Proton installation. Install Proton-GE or use Steam's Proton.")?;
+    let compat = find_or_create_compat(&root)?;
+    let mut child = Command::new(&proton)
+        .env("STEAM_COMPAT_DATA_PATH", &compat)
+        .env("STEAM_COMPAT_CLIENT_INSTALL_PATH", steam_candidates().first().unwrap_or(&PathBuf::from(".")).to_string_lossy().to_string())
+        .arg("run")
+        .arg(&exe)
+        .current_dir(exe.parent().unwrap_or(&root))
+        .spawn()
+        .map_err(|e| format!("failed to spawn Proton: {e}"))?;
+    // Wait on a blocking thread so we don't block the async runtime
+    tokio::task::spawn_blocking(move || child.wait())
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 /// Launch Propnight.exe via Proton (or Steam if preferred).
 /// Prefers an existing Proton prefix under steamapps/compatdata if present.
 #[command]

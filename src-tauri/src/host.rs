@@ -222,46 +222,65 @@ pub async fn list_sessions(_app: AppHandle) -> Result<Value, String> {
 pub async fn play(app: AppHandle) -> Result<Value, String> {
     let mut s = settings::load_settings().await.unwrap_or_default();
     if s.token.is_none() { s.token = settings::load_token(); }
+    let token = s.token.clone().ok_or("not logged in")?;
     let install = game::detect_install().await.map_err(|e| e.to_string())?;
     let Some(install) = install else {
         return Ok(json!({ "play": { "title": "Game not found", "sub": "Set path in Settings", "disabled": true } }));
     };
+    let root = install.root.to_string_lossy().to_string();
+    let win64 = install.root.join("Propnight/Binaries/Win64");
 
-    // Check / apply updates
-    let update = updater::check_updates(install.root.to_string_lossy().to_string()).await;
-    let msg = match &update {
+    // 1. Update
+    emit_state(&app, json!({ "play": { "title": "UPDATING", "sub": "Checking files…", "busy": true, "disabled": true, "progress": -1 } }));
+    let update = updater::check_updates(root.clone()).await;
+    let update_msg = match &update {
         Ok(u) if !u.up_to_date => format!("Updated {} files", u.files_changed),
         Ok(_) => "Up to date".into(),
         Err(e) => format!("Update skipped: {e}"),
     };
 
-    // Identity
+    // 2. Identity
     if let (Some(name), Some(sid)) = (&s.username, &s.steam_id) {
-        let _ = game::set_identity(
-            install.root.to_string_lossy().to_string(),
-            name.clone(),
-            sid.clone(),
-        )
-        .await;
+        let _ = game::set_identity(root.clone(), name.clone(), sid.clone()).await;
     }
 
-    // Launch
-    match game::launch_game(install.root.to_string_lossy().to_string()).await {
-        Ok(info) => {
+    // 3. Profile sync before launch
+    emit_state(&app, json!({ "play": { "title": "SYNCING", "sub": "Syncing your profile…", "busy": true, "disabled": true, "progress": -1 } }));
+    let _ = api::sync_profile(token.clone(), root.clone()).await;
+
+    // 4. Relay host + optional join command
+    if let Ok(me) = api::me(&token).await {
+        let relay = me.get("relayHost").and_then(|v| v.as_str())
+            .or_else(|| me.pointer("/account/relayHost").and_then(|v| v.as_str()))
+            .or_else(|| me.pointer("/account/relays/0/host").and_then(|v| v.as_str()));
+        if let Some(host) = relay {
+            let _ = std::fs::create_dir_all(&win64);
+            let _ = std::fs::write(win64.join("revival-relay.txt"), host);
+        }
+    }
+    // pending join is handled by the join command writing the file before calling play
+
+    // 5. Launch and wait
+    emit_state(&app, json!({ "play": { "title": "STARTING", "sub": "Launching Propnight…", "busy": true, "disabled": true, "progress": -1 } }));
+    match game::launch_and_wait(&root).await {
+        Ok(_) => {
+            // 6. After exit: sync profile again
+            emit_state(&app, json!({ "play": { "title": "SAVING", "sub": "Saving your profile…", "busy": true, "disabled": true, "progress": -1 } }));
+            let _ = api::sync_profile(token, root).await;
             let state = json!({
-                "play": { "title": "Running", "sub": info, "busy": true },
-                "splash": msg
+                "play": { "title": "PLAY", "sub": "Everything is up to date.", "busy": false, "disabled": false },
+                "splash": update_msg,
+                "toast": { "level": "good", "title": "Profile saved", "text": "See you next game!" }
             });
             emit_state(&app, state.clone());
-            let _ = refresh_me(app.clone()).await;
             Ok(state)
         }
         Err(e) => {
             let state = json!({
-                "play": { "title": "Launch failed", "sub": e, "disabled": false }
+                "play": { "title": "Launch failed", "sub": e, "disabled": false, "busy": false },
+                "toast": { "level": "bad", "title": "Could not start", "text": e }
             });
             emit_state(&app, state.clone());
-            let _ = refresh_me(app.clone()).await;
             Ok(state)
         }
     }
