@@ -169,11 +169,24 @@ pub async fn refresh_me(app: AppHandle) -> Result<Value, String> {
 pub async fn refresh_servers(app: AppHandle) -> Result<Value, String> {
     let mut s = settings::load_settings().await.unwrap_or_default();
     if s.token.is_none() { s.token = settings::load_token(); }
-    let token = s.token.ok_or("not logged in")?;
-    let servers = api::servers(&token).await?;
-    let state = json!({ "servers": servers.get("servers").cloned().unwrap_or(json!([])) });
-    emit_state(&app, state.clone());
-    Ok(state)
+    let Some(token) = s.token.filter(|t| !t.is_empty()) else {
+        let state = json!({ "servers": [], "serversError": "not logged in" });
+        emit_state(&app, state.clone());
+        return Ok(state);
+    };
+    match api::servers(&token).await {
+        Ok(resp) => {
+            let list = resp.get("servers").cloned().unwrap_or(json!([]));
+            let state = json!({ "servers": list });
+            emit_state(&app, state.clone());
+            Ok(state)
+        }
+        Err(e) => {
+            let state = json!({ "servers": [], "serversError": e });
+            emit_state(&app, state.clone());
+            Ok(state)
+        }
+    }
 }
 
 /// One-shot friends long-poll. UI can call this in a loop.

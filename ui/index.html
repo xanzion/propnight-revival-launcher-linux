@@ -833,7 +833,7 @@ function showTab(t) {
   if (t === 'dlc') send('dlcRefresh');
 }
 // public games (quick play lobbies): roles and ranks of who is in them, never names
-function renderServers(list) {
+function renderServers(list, err) {
   $('srvCount').textContent = list.length;
   $('srvCount').classList.toggle('on', list.length > 0);
   const panel = $('serversPanel');
@@ -841,8 +841,15 @@ function renderServers(list) {
   const head = document.createElement('div');
   head.className = 'srvhead';
   head.innerHTML = '<h2>Public games</h2><small></small>';
-  head.querySelector('small').textContent = list.length ? `${list.length} game${list.length === 1 ? '' : 's'} · updated live` : 'updated live';
+  head.querySelector('small').textContent = err ? 'error' : (list.length ? `${list.length} game${list.length === 1 ? '' : 's'} · updated live` : 'updated live');
   panel.appendChild(head);
+  if (err) {
+    const e = document.createElement('div');
+    e.className = 'fempty';
+    e.textContent = 'Could not load servers: ' + err;
+    panel.appendChild(e);
+    return;
+  }
   if (!list.length) {
     const e = document.createElement('div');
     e.className = 'fempty';
@@ -955,7 +962,7 @@ function render(s) {
   }
   if (s.friends) renderFriends(s.friends);
   if (s.dlc) renderDlc(s.dlc);
-  if (s.servers) renderServers(s.servers);
+  if (s.servers) renderServers(s.servers, s.serversError);
   if (s.tab) showTab(s.tab);
   if (s.play) {
     const p = s.play, btn = $('play');
