@@ -180,10 +180,14 @@ pub async fn launch_and_wait(root: &str) -> Result<(), String> {
 
     // Prefer umu-run (designed to run Proton outside Steam with the full runtime).
     // Fall back to SteamLinuxRuntime wrapper, then raw proton.
+    let proton_dir = proton.parent().unwrap_or(&proton).to_path_buf();
     let mut cmd = if let Some(umu) = find_umu() {
         let mut c = Command::new(umu);
-        c.env("PROTONPATH", proton.parent().unwrap_or(&proton));
+        // umu wants the directory that contains the proton script.
+        // Also set STORE=steam so it treats this as the Steam app.
+        c.env("PROTONPATH", &proton_dir);
         c.env("GAMEID", "umu-1549180");
+        c.env("STORE", "steam");
         c.env("WINEPREFIX", compat.join("pfx"));
         c.arg(&exe);
         c
