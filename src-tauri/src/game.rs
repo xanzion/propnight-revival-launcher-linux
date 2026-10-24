@@ -322,6 +322,17 @@ pub async fn launch_and_wait(root: &str) -> Result<(), String> {
             }
         }
     }
+    // Always refresh Goldberg config on this launch (do not depend on settings).
+    let settings = crate::settings::load_settings().await.unwrap_or_default();
+    let name = settings.username.clone().unwrap_or_else(|| "Player".into());
+    let sid = settings.steam_id.clone().unwrap_or_else(|| "76561197960265728".into());
+    for dir in [&steamworks.join("steam_settings"), &win64.join("steam_settings")] {
+        let _ = std::fs::create_dir_all(dir);
+        let _ = std::fs::write(dir.join("force_account_name.txt"), &name);
+        let _ = std::fs::write(dir.join("force_steamid.txt"), &sid);
+        let _ = std::fs::write(dir.join("steam_appid.txt"), "1549180");
+        let _ = std::fs::write(dir.join("disable_overlay.txt"), "");
+    }
     let _ = std::fs::write(win64.join("steam_appid.txt"), "1549180");
     let _ = std::fs::write(steamworks.join("steam_appid.txt"), "1549180");
     // Game may live on a separate mount (e.g. /home/user/storage1).
