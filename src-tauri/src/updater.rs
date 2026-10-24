@@ -224,7 +224,7 @@ pub async fn check_updates(game_root: String) -> Result<UpdateResult, String> {
     // Explicitly ensure Goldberg steam_api64.dll is present and correct.
     // The game crashes on matchmaking if this is missing or is the original Steam DLL.
     let steam_api = "Engine/Binaries/ThirdParty/Steamworks/Steamv147/Win64/steam_api64.dll";
-    if let Some(f) = manifest.files.iter().find(|f| f.path.replace('\\','/') == steam_api) {
+    if let Some(f) = manifest.files.iter().find(|f| f.path.replace('\\', "/") == steam_api) {
         let path = local_path(&root, steam_api)?;
         let ok = path.exists()
             && std::fs::metadata(&path).map(|m| m.len() == f.size).unwrap_or(false)

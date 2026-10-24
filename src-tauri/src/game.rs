@@ -152,7 +152,7 @@ pub async fn launch_and_wait(root: &str) -> Result<(), String> {
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped());
 
-    let mut child = cmd.spawn().map_err(|e| format!("failed to spawn Proton ({}): {e}", proton.display()))?;
+    let child = cmd.spawn().map_err(|e| format!("failed to spawn Proton ({}): {e}", proton.display()))?;
     let output = tokio::task::spawn_blocking(move || child.wait_with_output())
         .await
         .map_err(|e| e.to_string())?

@@ -101,7 +101,7 @@ pub async fn load_settings() -> Result<Settings, String> {
 }
 
 #[command]
-pub async fn save_settings(mut settings: Settings) -> Result<(), String> {
+pub async fn save_settings(settings: Settings) -> Result<(), String> {
     // Always keep the token in the file. Also try keyring.
     try_keyring_save(settings.token.as_deref());
     save_settings_sync(settings)
