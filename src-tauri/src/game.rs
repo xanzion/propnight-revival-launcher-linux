@@ -114,6 +114,7 @@ pub async fn set_identity(root: String, name: String, steam_id: String) -> Resul
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     std::fs::write(dir.join("force_account_name.txt"), &name).map_err(|e| e.to_string())?;
     std::fs::write(dir.join("force_steamid.txt"), &steam_id).map_err(|e| e.to_string())?;
+    std::fs::write(dir.join("steam_appid.txt"), "1549180").map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -162,7 +163,7 @@ pub async fn launch_and_wait(root: &str) -> Result<(), String> {
         let err = String::from_utf8_lossy(&output.stderr);
         let out = String::from_utf8_lossy(&output.stdout);
         let msg = if !err.trim().is_empty() { err } else { out };
-        return Err(format!("Proton exited {}: {}", output.status, msg.trim().chars().take(400).collect::<String>()));
+        return Err(format!("Proton exited {}: {}", output.status, msg.trim().chars().take(1200).collect::<String>()));
     }
     Ok(())
 }
