@@ -115,6 +115,8 @@ pub async fn set_identity(root: String, name: String, steam_id: String) -> Resul
     std::fs::write(dir.join("force_account_name.txt"), &name).map_err(|e| e.to_string())?;
     std::fs::write(dir.join("force_steamid.txt"), &steam_id).map_err(|e| e.to_string())?;
     std::fs::write(dir.join("steam_appid.txt"), "1549180").map_err(|e| e.to_string())?;
+    let dll_dir = root.join("Engine/Binaries/ThirdParty/Steamworks/Steamv147/Win64");
+    let _ = std::fs::write(dll_dir.join("steam_appid.txt"), "1549180");
     Ok(())
 }
 
@@ -204,11 +206,25 @@ pub async fn launch_and_wait(root: &str) -> Result<(), String> {
     // Unreal loads steam_api64.dll from the Steamworks path, but Wine often
     // fails to find it unless it is also next to the exe. Copy Goldberg there
     // and force Wine to use the native (game) DLL.
-    let src_dll = root.join("Engine/Binaries/ThirdParty/Steamworks/Steamv147/Win64/steam_api64.dll");
-    let dst_dll = exe.parent().unwrap_or(&root).join("steam_api64.dll");
+    let steamworks = root.join("Engine/Binaries/ThirdParty/Steamworks/Steamv147/Win64");
+    let src_dll = steamworks.join("steam_api64.dll");
+    let win64 = exe.parent().unwrap_or(&root).to_path_buf();
+    let dst_dll = win64.join("steam_api64.dll");
     if src_dll.exists() {
         let _ = std::fs::copy(&src_dll, &dst_dll);
     }
+    let src_settings = steamworks.join("steam_settings");
+    let dst_settings = win64.join("steam_settings");
+    if src_settings.exists() {
+        let _ = std::fs::create_dir_all(&dst_settings);
+        if let Ok(entries) = std::fs::read_dir(&src_settings) {
+            for e in entries.flatten() {
+                let _ = std::fs::copy(e.path(), dst_settings.join(e.file_name()));
+            }
+        }
+    }
+    let _ = std::fs::write(win64.join("steam_appid.txt"), "1549180");
+    let _ = std::fs::write(steamworks.join("steam_appid.txt"), "1549180");
     // Game may live on a separate mount (e.g. /home/user/storage1).
     // Pressure-vessel refuses "parent for game drive" unless that path is shared.
     let share = root.parent().unwrap_or(&root).to_string_lossy().to_string();
@@ -220,7 +236,7 @@ pub async fn launch_and_wait(root: &str) -> Result<(), String> {
         .env("SteamAppId", "1549180")
         .env("SteamGameId", "1549180")
         .env("PRESSURE_VESSEL_FILESYSTEMS_RW", &share)
-        .env("WINEDLLOVERRIDES", "steam_api64=n,b;steamclient=d;steamclient64=d")
+        .env("WINEDLLOVERRIDES", "steam_api64=n,b")
         .env("PROTON_LOG", "1")
         .env_remove("PYTHONHOME")
         .env_remove("PYTHONPATH")
