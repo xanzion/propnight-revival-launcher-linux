@@ -172,30 +172,41 @@ pub async fn launch_game(root: String) -> Result<String, String> {
 }
 
 fn find_proton() -> Option<PathBuf> {
-    // Common Proton-GE / Steam Proton locations
     let home = home_dir()?;
-    let candidates = [
+    let mut bases = vec![
         home.join(".steam/steam/compatibilitytools.d"),
         home.join(".local/share/Steam/compatibilitytools.d"),
         home.join(".var/app/com.valvesoftware.Steam/.local/share/Steam/compatibilitytools.d"),
+        home.join(".steam/steam/steamapps/common"),
+        home.join(".local/share/Steam/steamapps/common"),
+        home.join(".var/app/com.valvesoftware.Steam/.local/share/Steam/steamapps/common"),
     ];
-    for base in candidates {
+    // Also search libraryfolders
+    for steam in steam_candidates() {
+        bases.push(steam.join("compatibilitytools.d"));
+        bases.push(steam.join("steamapps/common"));
+    }
+    for base in bases {
         if let Ok(entries) = std::fs::read_dir(&base) {
             for entry in entries.flatten() {
                 let proton = entry.path().join("proton");
                 if proton.exists() {
                     return Some(proton);
                 }
+                // Some Proton builds put the script one level deeper
+                if let Ok(sub) = std::fs::read_dir(entry.path()) {
+                    for s in sub.flatten() {
+                        let p = s.path().join("proton");
+                        if p.exists() { return Some(p); }
+                    }
+                }
             }
         }
     }
-    // Also check PATH
     if let Ok(out) = Command::new("which").arg("proton").output() {
         if out.status.success() {
             let p = String::from_utf8_lossy(&out.stdout).trim().to_string();
-            if !p.is_empty() {
-                return Some(PathBuf::from(p));
-            }
+            if !p.is_empty() { return Some(PathBuf::from(p)); }
         }
     }
     None

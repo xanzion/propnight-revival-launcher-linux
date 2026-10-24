@@ -266,7 +266,7 @@ pub async fn play(app: AppHandle) -> Result<Value, String> {
     let root = install.root.to_string_lossy().to_string();
     let win64 = install.root.join("Propnight/Binaries/Win64");
 
-    // 1. Update
+    // 1. Update (best-effort; do not block launch)
     emit_state(&app, json!({ "play": { "title": "UPDATING", "sub": "Checking files…", "busy": true, "disabled": true, "progress": -1 } }));
     let update = updater::check_updates(root.clone()).await;
     let update_msg = match &update {
@@ -280,7 +280,7 @@ pub async fn play(app: AppHandle) -> Result<Value, String> {
         let _ = game::set_identity(root.clone(), name.clone(), sid.clone()).await;
     }
 
-    // 3. Profile sync before launch
+    // 3. Profile sync before launch (best-effort)
     emit_state(&app, json!({ "play": { "title": "SYNCING", "sub": "Syncing your profile…", "busy": true, "disabled": true, "progress": -1 } }));
     let _ = api::sync_profile(token.clone(), root.clone()).await;
 
@@ -335,7 +335,7 @@ pub async fn play(app: AppHandle) -> Result<Value, String> {
         }
         Err(e) => {
             let state = json!({
-                "play": { "title": "Launch failed", "sub": e, "disabled": false, "busy": false },
+                "play": { "title": "PLAY", "sub": format!("Launch failed: {}", e), "disabled": false, "busy": false },
                 "toast": { "level": "bad", "title": "Could not start", "text": e }
             });
             emit_state(&app, state.clone());
