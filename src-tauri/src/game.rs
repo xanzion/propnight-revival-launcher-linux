@@ -279,6 +279,17 @@ pub fn find_proton_public() -> Option<PathBuf> {
         ] {
             if p.exists() { found.push(p); }
         }
+        // Extra Steam libraries (e.g. /home/xan/storage1/SteamLibrary)
+        for steam in steam_candidates() {
+            if let Ok(libs) = std::fs::read_to_string(steam.join("steamapps/libraryfolders.vdf")) {
+                for lib in parse_libraryfolders(&steam.join("steamapps/libraryfolders.vdf")) {
+                    let p = lib.join("steamapps/common/Proton - Experimental/proton");
+                    if p.exists() { found.push(p); }
+                    bases.push(lib.join("steamapps/common"));
+                    bases.push(lib.join("compatibilitytools.d"));
+                }
+            }
+        }
         bases.push(home.join(".steam/steam/compatibilitytools.d"));
         bases.push(home.join(".local/share/Steam/compatibilitytools.d"));
         bases.push(home.join(".var/app/com.valvesoftware.Steam/.local/share/Steam/compatibilitytools.d"));
