@@ -336,6 +336,7 @@ pub async fn launch_and_wait(root: &str) -> Result<(), String> {
         .env("PRESSURE_VESSEL_FILESYSTEMS_RW", &share)
         .env("WINEDLLOVERRIDES", "steam_api64=n,b")
         .env("PROTON_LOG", "1")
+        .env("WINEDEBUG", "+loaddll")
         .env_remove("PYTHONHOME")
         .env_remove("PYTHONPATH")
         .env_remove("PYTHONSAFEPATH")
@@ -349,7 +350,16 @@ pub async fn launch_and_wait(root: &str) -> Result<(), String> {
         .await.map_err(|e| e.to_string())?
         .map_err(|e| e.to_string())?;
 
-    let combined = format!("PROTONPATH={}\n{}\n{}", proton_dir.display(), String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr));
+    let dll_info = {
+        let p = win64.join("steam_api64.dll");
+        if p.exists() {
+            let hash = crate::crypto::sha256_file(&p).unwrap_or_else(|_| "?".into());
+            format!("steam_api64={} sha256={} (expect 0cfe547e…)", p.display(), hash)
+        } else {
+            "steam_api64=MISSING next to exe".into()
+        }
+    };
+    let combined = format!("PROTONPATH={}\n{}\n{}\n{}", proton_dir.display(), dll_info, String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr));
     let _ = std::fs::write(&log_path, &combined);
 
     if !output.status.success() {
