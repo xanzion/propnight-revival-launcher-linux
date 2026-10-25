@@ -389,7 +389,6 @@ pub fn find_proton_public() -> Option<PathBuf> {
         ] {
             if p.exists() { found.push(p); }
         }
-        // Extra Steam libraries (e.g. /home/xan/storage1/SteamLibrary)
         for steam in steam_candidates() {
             if let Ok(libs) = std::fs::read_to_string(steam.join("steamapps/libraryfolders.vdf")) {
                 for lib in parse_libraryfolders(&steam.join("steamapps/libraryfolders.vdf")) {
