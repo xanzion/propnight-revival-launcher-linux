@@ -52,7 +52,30 @@ The AppImage will be produced under `src-tauri/target/release/bundle/appimage/`.
 ### Linux-specific notes
 
 - **Steam paths**: Automatically detects `~/.local/share/Steam`, `~/.steam/steam`, Flatpak (`~/.var/app/com.valvesoftware.Steam/...`), and additional libraries from `libraryfolders.vdf`.
-- **Launch**: `steam -applaunch 1549180`. Set Steam to Proton Experimental and use a launch option that sets `WINEDLLOVERRIDES="dwmapi=n,b;steam_api64=n,b"` and starts `Propnight.exe` instead of `Propnight_BE.exe`. The launcher deploys `src-tauri/resources/UE4SS-settings.ini` (all hooks off) on every Play.
+- **Launch**: Play runs `steam -applaunch 1549180`. Steam must be set to **Proton Experimental**, and Propnight's launch options must run the script below. The launcher deploys `src-tauri/resources/UE4SS-settings.ini` (all hooks off) on every Play.
+
+### Steam launch script
+
+Place the script at `~/scripts/propnight-direct.sh` and make it executable:
+
+```bash
+mkdir -p ~/scripts
+cat > ~/scripts/propnight-direct.sh << 'EOF'
+#!/bin/bash
+export WINEDLLOVERRIDES="dwmapi=n,b;steam_api64=n,b"
+export PROTON_LOG=1
+exec "${1/Propnight_BE.exe/Propnight.exe}" "${@:2}"
+EOF
+chmod +x ~/scripts/propnight-direct.sh
+```
+
+In Steam: Propnight → Properties → Launch Options:
+
+```text
+~/scripts/propnight-direct.sh %command%
+```
+
+The script sets the DLL overrides Proton needs for UE4SS and Goldberg, and starts `Propnight.exe` instead of `Propnight_BE.exe`. `%command%` must stay so Proton still wraps the launch.
 - **Saves**: Prefers the Proton prefix path for `SaveUserData.sav`, falls back to XDG locations.
 - **Token storage**: Uses the system keyring (`keyring` crate) when available; falls back to the config file.
 
