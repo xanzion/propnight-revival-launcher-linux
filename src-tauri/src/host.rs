@@ -790,7 +790,9 @@ pub async fn check_update_status(app: AppHandle) -> Result<Value, String> {
         "gameBytes": 0
     });
     if let Some(inst) = install {
-        match updater::plan_updates(&inst.root.to_string_lossy()).await {
+        let root = inst.root.to_string_lossy().to_string();
+        let _ = game::deploy_ue4ss_settings(&root);
+        match updater::plan_updates(&root).await {
             Ok((version, count)) => {
                 update = json!({
                     "checking": false,

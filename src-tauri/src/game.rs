@@ -280,11 +280,16 @@ fn find_umu() -> Option<PathBuf> {
 
 const UE4SS_SETTINGS: &str = include_str!("../resources/UE4SS-settings.ini");
 
-/// Write the Proton-safe UE4SS config (all hooks off) next to the game.
+/// Ensure the Proton-safe UE4SS config from the repo is next to the game.
+/// Writes only when the file is missing or does not match our copy.
 pub fn deploy_ue4ss_settings(root: &str) -> Result<(), String> {
     let win64 = PathBuf::from(root).join("Propnight/Binaries/Win64");
     std::fs::create_dir_all(&win64).map_err(|e| e.to_string())?;
-    std::fs::write(win64.join("UE4SS-settings.ini"), UE4SS_SETTINGS).map_err(|e| e.to_string())?;
+    let path = win64.join("UE4SS-settings.ini");
+    let current = std::fs::read_to_string(&path).unwrap_or_default();
+    if current != UE4SS_SETTINGS {
+        std::fs::write(&path, UE4SS_SETTINGS).map_err(|e| e.to_string())?;
+    }
     Ok(())
 }
 
