@@ -24,3 +24,10 @@ Thumbs.db
 
 # Logs
 *.log
+package-lock.json
+.gitignore
+src-tauri/gen/schemas/capabilities.json
+.gitignore
+src-tauri/gen/schemas/acl-manifests.json
+src-tauri/gen/schemas/linux-schema.json
+src-tauri/gen/schemas/desktop-schema.json
