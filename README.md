@@ -29,7 +29,7 @@ This is a complete port of the original Windows [.NET + WebView2 launcher](https
 - Node.js + npm
 - System webview dependencies (on Ubuntu/Debian: `libwebkit2gtk-4.1-dev`, `libgtk-3-dev`, `libayatana-appindicator3-dev`, etc.)
 - Steam with Propnight installed
-- Proton (Proton-GE recommended) for running the Windows game binary
+- Proton (Proton-GE or Proton Experimental recommended) for running the Windows game binary
 
 ## Build
 
