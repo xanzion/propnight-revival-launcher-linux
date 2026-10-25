@@ -131,6 +131,11 @@ fn chrono_like_ticks() -> u64 {
 
 
 /// Plan only: count files that differ from the signed manifest. Does not download or patch.
+/// Local config we own. Do not let the manifest overwrite or flag it.
+fn is_local_override(path: &str) -> bool {
+    path.replace('\\', "/").ends_with("UE4SS-settings.ini")
+}
+
 pub async fn plan_updates(game_root: &str) -> Result<(String, u32), String> {
     let client = Client::builder()
         .user_agent("PropnightRevivalLauncher/linux")
@@ -144,6 +149,7 @@ pub async fn plan_updates(game_root: &str) -> Result<(String, u32), String> {
     }
     let mut count = 0u32;
     for f in &manifest.files {
+        if is_local_override(&f.path) { continue; }
         let path = local_path(&root, &f.path)?;
         let needs = if path.exists() {
             match std::fs::metadata(&path) {
@@ -179,6 +185,7 @@ pub async fn check_updates(game_root: String) -> Result<UpdateResult, String> {
     let mut todo = Vec::new();
     for f in &manifest.files {
         if f.dlc.is_some() { continue; }  // DLC files are installed only via install_dlc
+        if is_local_override(&f.path) { continue; }
         let path = local_path(&root, &f.path)?;
         let needs = if path.exists() {
             match std::fs::metadata(&path) {
