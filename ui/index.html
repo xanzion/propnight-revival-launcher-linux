@@ -780,7 +780,7 @@ function renderFriends(d) {
     const actions = [];
     // already in the game you are in (you host it, or you both joined it): nothing to join or invite to
     if (f.sameGame) {}
-    else if (f.session && f.session.joinable) actions.push(['Join', 'go', () => { debug('join session ' + JSON.stringify(f.session)); send('join', { port: Number(f.session.port) || f.session.port, from: f.username, dlc: !!f.session.dlc, map: mapName(f.session.map) }); }]);
+    else if (f.session && f.session.joinable) actions.push(['Join', 'go', () => send('join', { port: f.session.port, from: f.username, dlc: !!f.session.dlc, map: mapName(f.session.map) })]);
     // one Invite: in a game, to that game (they join it, not your squad); in the menu, to your squad
     // (they follow you into your games)
     else if (f.status !== 'offline' && d.you && d.you.session) actions.push(['Invite', '', act('invite', f.username), 'Invite to your game']);
@@ -892,7 +892,7 @@ function renderServers(list, err) {
     btn.textContent = g.mine ? 'Your game' : g.joined ? 'Joined' : open ? 'Join' : g.players >= g.max ? 'Full' : 'Playing';
     btn.className = 'btn ' + (open ? 'primary' : 'ghost');
     btn.disabled = !open;
-    btn.onclick = () => { debug('join server ' + JSON.stringify(g)); send('join', { port: Number(g.port) || g.port, from: 'a public game', dlc: !!g.dlc, map: mapName(g.map) }); };
+    btn.onclick = () => send('join', { port: g.port, from: 'a public game', dlc: !!g.dlc, map: mapName(g.map) });
     panel.appendChild(card);
   }
 }

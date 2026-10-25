@@ -269,7 +269,6 @@ pub async fn play(app: AppHandle) -> Result<Value, String> {
     // 1. Install / update revival files (required, same as original)
     emit_state(&app, json!({ "play": { "title": "UPDATING", "sub": "Checking revival files…", "busy": true, "disabled": true, "progress": -1 } }));
     let update = updater::check_updates(root.clone()).await;
-    crate::game::arm_relay_agent(&root);
     let update_msg = match &update {
         Ok(u) if !u.up_to_date => format!("Updated {} files", u.files_changed),
         Ok(_) => "Up to date".into(),
@@ -453,20 +452,11 @@ pub async fn friend(app: AppHandle, action: String, username: Option<String>, co
     Ok(state)
 }
 
-fn parse_relay_port(v: Option<Value>) -> u16 {
-    match v {
-        Some(Value::Number(n)) => n.as_u64().unwrap_or(0) as u16,
-        Some(Value::String(s)) => s.trim().parse().unwrap_or(0),
-        _ => 0,
-    }
-}
-
 #[command]
-pub async fn join(app: AppHandle, port: Option<Value>, from: Option<String>, dlc: Option<bool>, map: Option<String>) -> Result<Value, String> {
-    let raw = port.clone();
-    let port = parse_relay_port(port);
+pub async fn join(app: AppHandle, port: Option<u16>, from: Option<String>, dlc: Option<bool>, map: Option<String>) -> Result<Value, String> {
+    let port = port.unwrap_or(0);
     if !(7800..=7999).contains(&port) {
-        return Ok(json!({ "toast": { "level": "warn", "title": "Join", "text": format!("Invalid port: {} (got {:?}). A friend's game needs a relay port 7800-7999. If they are hosting from Linux, the relay agent did not register.", port, raw) } }));
+        return Ok(json!({ "toast": { "level": "warn", "title": "Join", "text": "Invalid port" } }));
     }
 
     // Busy guard
@@ -907,7 +897,6 @@ pub async fn start_background(app: AppHandle) {
             push_presence().await;
             process_social_actions().await;
             flush_reports_and_matches().await;
-            let _ = crate::game::start_pending_relay().await;
             // Server status every ~30s, update check every ~60s
             use std::sync::atomic::{AtomicU32, Ordering};
             static COUNTER: AtomicU32 = AtomicU32::new(0);
