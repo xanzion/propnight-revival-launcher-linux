@@ -326,7 +326,8 @@ fn game_running() -> bool {
 
 /// Launch via Steam so the user's Steam launch options apply
 /// (Proton Experimental, dwmapi=n,b, Propnight.exe instead of _BE).
-pub async fn launch_and_wait(root: &str) -> Result<(), String> {
+/// `on_running` is called once Propnight.exe is seen, so the UI can leave STARTING.
+pub async fn launch_and_wait(root: &str, on_running: impl FnOnce()) -> Result<(), String> {
     deploy_ue4ss_settings(root)?;
     let steam = find_steam().ok_or(
         "Steam not found. Install Steam and set Propnight's launch options to the working script.",
@@ -348,6 +349,7 @@ pub async fn launch_and_wait(root: &str) -> Result<(), String> {
     if !seen {
         return Err("Steam did not start Propnight.exe. Check the Steam launch options.".into());
     }
+    on_running();
     while game_running() {
         tokio::time::sleep(std::time::Duration::from_secs(2)).await;
     }

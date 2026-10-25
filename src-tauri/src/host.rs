@@ -326,7 +326,12 @@ pub async fn play(app: AppHandle) -> Result<Value, String> {
         }
     });
 
-    match game::launch_and_wait(&root).await {
+    let app_running = app.clone();
+    match game::launch_and_wait(&root, move || {
+        emit_state(&app_running, json!({
+            "play": { "title": "PLAYING", "sub": "Game is running", "busy": true, "disabled": true, "progress": -1 }
+        }));
+    }).await {
         Ok(_) => {
             // 6. After exit: sync profile again
             emit_state(&app, json!({ "play": { "title": "SAVING", "sub": "Saving your profile…", "busy": true, "disabled": true, "progress": -1 } }));
