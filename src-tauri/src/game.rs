@@ -457,6 +457,72 @@ pub fn find_proton_public() -> Option<PathBuf> {
     found.into_iter().next()
 }
 
+
+/// Patch the installed LocalMap mod so a host writes the agent command for us.
+/// The mod's own `start` often fails under Proton (.NET / cmd). We start the exe.
+pub fn arm_relay_agent(root: &str) {
+    let lua = PathBuf::from(root).join("Propnight/Binaries/Win64/Mods/PropnightLocalMap/Scripts/main.lua");
+    let Ok(text) = std::fs::read_to_string(&lua) else { return };
+    if text.contains("revival-relay-cmd.txt") { return; }
+    let needle = "log(\"Starting relay agent for \" .. name .. \" on \" .. shellSafe(mapName))";
+    let patch = r#"log("Starting relay agent for " .. name .. " on " .. shellSafe(mapName))
+    local cmdFile = io.open(win64 .. "/revival-relay-cmd.txt", "w")
+    if cmdFile then cmdFile:write(exe .. "\n" .. args); cmdFile:close() end"#;
+    if !text.contains(needle) { return; }
+    let _ = std::fs::write(&lua, text.replacen(needle, patch, 1));
+}
+
+/// If the mod asked to start the agent, launch RevivalRelay.exe in the game's Proton prefix.
+pub async fn start_pending_relay() -> Result<(), String> {
+    let install = detect_install().await.ok().flatten();
+    let Some(install) = install else { return Ok(()) };
+    let win64 = install.root.join("Propnight/Binaries/Win64");
+    let cmd_path = win64.join("revival-relay-cmd.txt");
+    if !cmd_path.exists() { return Ok(()) }
+    let text = std::fs::read_to_string(&cmd_path).unwrap_or_default();
+    let _ = std::fs::remove_file(&cmd_path);
+    let mut lines = text.lines();
+    let exe_line = lines.next().unwrap_or("").trim();
+    let args = lines.next().unwrap_or("").trim();
+    if exe_line.is_empty() || args.is_empty() { return Ok(()) }
+    let exe = win64.join("RevivalRelay/RevivalRelay.exe");
+    if !exe.exists() {
+        tracing::warn!("relay agent missing: {}", exe.display());
+        return Ok(());
+    }
+    let proton = find_proton_public().ok_or("no proton")?;
+    let compat = find_or_create_compat(&install.root)?;
+    let steam = steam_candidates().into_iter().next().unwrap_or_else(|| PathBuf::from("."));
+    let mut cmd = Command::new(&proton);
+    cmd.env("STEAM_COMPAT_DATA_PATH", &compat)
+        .env("STEAM_COMPAT_CLIENT_INSTALL_PATH", &steam)
+        .arg("run")
+        .arg(&exe);
+    for part in split_agent_args(args) {
+        cmd.arg(part);
+    }
+    cmd.spawn().map_err(|e| format!("relay agent: {e}"))?;
+    tracing::info!("started relay agent via {}", proton.display());
+    Ok(())
+}
+
+fn split_agent_args(args: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut cur = String::new();
+    let mut in_quote = false;
+    for c in args.chars() {
+        match c {
+            '"' => in_quote = !in_quote,
+            ' ' if !in_quote => {
+                if !cur.is_empty() { out.push(std::mem::take(&mut cur)); }
+            }
+            _ => cur.push(c),
+        }
+    }
+    if !cur.is_empty() { out.push(cur); }
+    out
+}
+
 fn find_or_create_compat(game_root: &Path) -> Result<PathBuf, String> {
     // Prefer the prefix Steam already uses for 1549180 (works from the Steam UI).
     let mut candidates = Vec::new();
