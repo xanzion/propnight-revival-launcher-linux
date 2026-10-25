@@ -278,140 +278,73 @@ fn find_umu() -> Option<PathBuf> {
     None
 }
 
-pub async fn launch_and_wait(root: &str) -> Result<(), String> {
-    let root = PathBuf::from(root);
-    let exe = root.join(EXE_RELATIVE);
-    if !exe.exists() {
-        return Err("Propnight.exe not found".into());
-    }
-    let ge = ensure_ge_proton(None).await?;
-    let proton = ge.join("proton");
-    let compat = find_or_create_compat(&root)?;
-    // Proton user_settings.py forces the Goldberg DLL even if the env is dropped.
-    let user_settings = r#"# Force Goldberg steam_api64 (native only) and disable real steamclient
-import os
-os.environ["WINEDLLOVERRIDES"] = "steam_api64=n,b;dwmapi=n,b"
-"#;
-    let _ = std::fs::write(ge.join("user_settings.py"), user_settings);
-    let _ = std::fs::create_dir_all(&compat);
-    let _ = std::fs::write(compat.join("user_settings.py"), user_settings);
-    let steam = steam_candidates().into_iter().next().unwrap_or_else(|| PathBuf::from("."));
-    let log_path = directories::BaseDirs::new()
-        .map(|b| b.config_dir().join("PropnightRevival").join("proton.log"))
-        .unwrap_or_else(|| PathBuf::from("proton.log"));
-    if let Some(parent) = log_path.parent() { let _ = std::fs::create_dir_all(parent); }
+const UE4SS_SETTINGS: &str = include_str!("../resources/UE4SS-settings.ini");
 
-    // Prefer umu-run (designed to run Proton outside Steam with the full runtime).
-    // Fall back to SteamLinuxRuntime wrapper, then raw proton.
-    let proton_dir = ge.clone();
-    let mut cmd = if let Some(umu) = find_umu() {
-        let mut c = Command::new(umu);
-        // umu wants the directory that contains the proton script.
-        // Also set STORE=steam so it treats this as the Steam app.
-        c.env("PROTONPATH", &proton_dir);
-        c.env("GAMEID", "umu-1549180");
-        // Do not set STORE=steam — that makes umu talk to the Steam client
-        // and the game sticks on Initializing Matchmaking.
-        c.env("WINEPREFIX", compat.join("pfx"));
-        c.arg(&exe);
-        c
-    } else if let Some(rt) = find_runtime() {
-        let mut c = Command::new(rt);
-        c.arg("--verb=run").arg("--").arg(&proton).arg("run").arg(&exe);
-        c
-    } else {
-        let mut c = Command::new("python3");
-        c.arg(&proton).arg("run").arg(&exe);
-        c
-    };
-    // Unreal loads steam_api64.dll from the Steamworks path, but Wine often
-    // fails to find it unless it is also next to the exe. Copy Goldberg there
-    // and force Wine to use the native (game) DLL.
-    let steamworks = root.join("Engine/Binaries/ThirdParty/Steamworks/Steamv147/Win64");
-    let src_dll = steamworks.join("steam_api64.dll");
-    let win64 = exe.parent().unwrap_or(&root).to_path_buf();
-    let dst_dll = win64.join("steam_api64.dll");
-    // Same as the original: enable revival mods in Mods/mods.txt before launch.
-    let _ = enable_mods(&root, &["PropnightLoginBypasser".into(), "PropnightLocalMap".into()]);
-    let ue4ss = win64.join("UE4SS.dll");
-    let dwmapi = win64.join("dwmapi.dll");
-    if !ue4ss.exists() || !dwmapi.exists() {
-        return Err("UE4SS.dll or dwmapi.dll missing next to Propnight.exe. Run PLAY so the updater installs the revival mods.".into());
-    }
-    if !src_dll.exists() {
-        return Err("Goldberg steam_api64.dll missing in Steamworks folder. Run PLAY once so the updater installs it.".into());
-    }
-    std::fs::copy(&src_dll, &dst_dll).map_err(|e| format!("failed to copy Goldberg DLL: {e}"))?;
-    let src_settings = steamworks.join("steam_settings");
-    let dst_settings = win64.join("steam_settings");
-    if src_settings.exists() {
-        let _ = std::fs::create_dir_all(&dst_settings);
-        if let Ok(entries) = std::fs::read_dir(&src_settings) {
-            for e in entries.flatten() {
-                let _ = std::fs::copy(e.path(), dst_settings.join(e.file_name()));
+/// Write the Proton-safe UE4SS config (all hooks off) next to the game.
+pub fn deploy_ue4ss_settings(root: &str) -> Result<(), String> {
+    let win64 = PathBuf::from(root).join("Propnight/Binaries/Win64");
+    std::fs::create_dir_all(&win64).map_err(|e| e.to_string())?;
+    std::fs::write(win64.join("UE4SS-settings.ini"), UE4SS_SETTINGS).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+fn find_steam() -> Option<PathBuf> {
+    if let Ok(out) = Command::new("which").arg("steam").output() {
+        if out.status.success() {
+            let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
+            if !s.is_empty() {
+                return Some(PathBuf::from(s));
             }
         }
     }
-    // Always refresh Goldberg config on this launch (do not depend on settings).
-    let settings = crate::settings::load_settings().await.unwrap_or_default();
-    let name = settings.username.clone().unwrap_or_else(|| "Player".into());
-    let sid = settings.steam_id.clone().unwrap_or_else(|| "76561197960265728".into());
-    for dir in [&steamworks.join("steam_settings"), &win64.join("steam_settings")] {
-        let _ = std::fs::create_dir_all(dir);
-        let _ = std::fs::write(dir.join("force_account_name.txt"), &name);
-        let _ = std::fs::write(dir.join("force_steamid.txt"), &sid);
-        let _ = std::fs::write(dir.join("steam_appid.txt"), "1549180");
-        let _ = std::fs::write(dir.join("disable_overlay.txt"), "");
-    }
-    let _ = std::fs::write(win64.join("steam_appid.txt"), "1549180");
-    let _ = std::fs::write(steamworks.join("steam_appid.txt"), "1549180");
-    // Game crashes at +0x181A576 without ever calling LoadLibrary("steam_api64").
-    // Force-load Goldberg via AppInit_DLLs so it is in the process before that call.
-    force_load_goldberg(&compat, &dst_dll);
-    // Game may live on a separate mount (e.g. /home/user/storage1).
-    // Pressure-vessel refuses "parent for game drive" unless that path is shared.
-    let share = root.parent().unwrap_or(&root).to_string_lossy().to_string();
-    cmd.env("STEAM_COMPAT_DATA_PATH", &compat)
-        .env("STEAM_COMPAT_CLIENT_INSTALL_PATH", &steam)
-        .env("STEAM_COMPAT_INSTALL_PATH", &root)
-        .env("STEAM_COMPAT_LIBRARY_PATHS", &share)
-        .env("STEAM_COMPAT_APP_ID", "1549180")
-        .env("SteamAppId", "1549180")
-        .env("SteamGameId", "1549180")
-        .env("PRESSURE_VESSEL_FILESYSTEMS_RW", &share)
-        .env("WINEDLLOVERRIDES", "steam_api64=n,b;dwmapi=n,b")
-        .env("PROTON_LOG", "1")
-        .env("WINEDEBUG", "+loaddll,+module,+seh")
-        .env("UMU_LOG", "1")
-        .env("DXVK_LOG_LEVEL", "info")
-        .env_remove("PYTHONHOME")
-        .env_remove("PYTHONPATH")
-        .env_remove("PYTHONSAFEPATH")
-        .env_remove("PYTHONSTARTUP")
-        .current_dir(exe.parent().unwrap_or(&root))
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped());
-
-    let child = cmd.spawn().map_err(|e| format!("failed to spawn Proton: {e}"))?;
-    let output = tokio::task::spawn_blocking(move || child.wait_with_output())
-        .await.map_err(|e| e.to_string())?
-        .map_err(|e| e.to_string())?;
-
-    let dll_info = {
-        let p = win64.join("steam_api64.dll");
-        if p.exists() {
-            let hash = crate::crypto::sha256_file(&p).unwrap_or_else(|_| "?".into());
-            format!("steam_api64={} sha256={} (expect 0cfe547e…)", p.display(), hash)
-        } else {
-            "steam_api64=MISSING next to exe".into()
+    if let Some(home) = home_dir() {
+        for p in [
+            home.join(".local/share/Steam/steam.sh"),
+            home.join(".steam/steam/steam.sh"),
+            home.join(".steam/root/steam.sh"),
+        ] {
+            if p.exists() {
+                return Some(p);
+            }
         }
-    };
-    let combined = format!("PROTONPATH={}\n{}\n{}\n{}", proton_dir.display(), dll_info, String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr));
-    let _ = std::fs::write(&log_path, &combined);
+    }
+    None
+}
 
-    if !output.status.success() {
-        let tail: String = combined.trim().chars().rev().take(600).collect::<String>().chars().rev().collect();
-        return Err(format!("Proton exited {}. Log: {}. …{}", output.status, log_path.display(), tail));
+fn game_running() -> bool {
+    Command::new("pgrep")
+        .args(["-f", "Propnight.exe"])
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+}
+
+/// Launch via Steam so the user's Steam launch options apply
+/// (Proton Experimental, dwmapi=n,b, Propnight.exe instead of _BE).
+pub async fn launch_and_wait(root: &str) -> Result<(), String> {
+    deploy_ue4ss_settings(root)?;
+    let steam = find_steam().ok_or(
+        "Steam not found. Install Steam and set Propnight's launch options to the working script.",
+    )?;
+    Command::new(&steam)
+        .args(["-applaunch", "1549180"])
+        .spawn()
+        .map_err(|e| format!("failed to start Steam ({steam}): {e}", steam = steam.display()))?;
+
+    // steam -applaunch returns immediately. Wait for the game, then for it to exit.
+    let mut seen = false;
+    for _ in 0..90 {
+        if game_running() {
+            seen = true;
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+    }
+    if !seen {
+        return Err("Steam did not start Propnight.exe. Check the Steam launch options.".into());
+    }
+    while game_running() {
+        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
     }
     Ok(())
 }

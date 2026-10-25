@@ -2,7 +2,7 @@
 
 Linux-native launcher for the [Propnight Revival](https://propnightrevival.online) community servers.
 
-This is a complete port of the original Windows [.NET + WebView2 launcher](https://github.com/AzoTe06/propnight-revival-launcher) to **Tauri v2** (Rust + system webview). The launcher itself runs natively on Linux (no Wine/Proton required for the launcher). The game binary (`Propnight.exe`) is still a Windows Unreal Engine executable and is launched via Proton.
+This is a complete port of the original Windows [.NET + WebView2 launcher](https://github.com/AzoTe06/propnight-revival-launcher) to **Tauri v2** (Rust + system webview). The launcher itself runs natively on Linux (no Wine/Proton required for the launcher). The game binary (`Propnight.exe`) is still a Windows Unreal Engine executable. Play launches it through Steam (`steam -applaunch 1549180`) so Steam's Proton and launch options apply.
 
 ## Features
 
@@ -19,7 +19,7 @@ This is a complete port of the original Windows [.NET + WebView2 launcher](https
 - Bug reporting
 - Settings persistence
 - Steam library detection (native Steam, Flatpak Steam, multiple library folders via `libraryfolders.vdf`)
-- Proton launch preferring Proton-GE, reusing existing compatdata for AppID 1549180 when present
+- Play launches via `steam -applaunch 1549180` (uses your Steam Proton and launch options)
 - XDG-compliant paths (`~/.local/share`, `~/.config`)
 - No root privileges required
 
@@ -52,7 +52,7 @@ The AppImage will be produced under `src-tauri/target/release/bundle/appimage/`.
 ### Linux-specific notes
 
 - **Steam paths**: Automatically detects `~/.local/share/Steam`, `~/.steam/steam`, Flatpak (`~/.var/app/com.valvesoftware.Steam/...`), and additional libraries from `libraryfolders.vdf`.
-- **Proton**: Looks for Proton-GE in `compatibilitytools.d`, falls back to Steam's Proton. Reuses `steamapps/compatdata/1549180` when it exists.
+- **Launch**: `steam -applaunch 1549180`. Set Steam to Proton Experimental and use a launch option that sets `WINEDLLOVERRIDES="dwmapi=n,b;steam_api64=n,b"` and starts `Propnight.exe` instead of `Propnight_BE.exe`. The launcher deploys `src-tauri/resources/UE4SS-settings.ini` (all hooks off) on every Play.
 - **Saves**: Prefers the Proton prefix path for `SaveUserData.sav`, falls back to XDG locations.
 - **Token storage**: Uses the system keyring (`keyring` crate) when available; falls back to the config file.
 
