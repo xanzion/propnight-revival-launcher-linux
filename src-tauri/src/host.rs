@@ -866,7 +866,7 @@ pub async fn discord_link(app: AppHandle) -> Result<Value, String> {
             // Poll for up to 5 minutes
             let before = api::me(&token).await.ok().and_then(|m| m.get("discord").and_then(|v| v.as_str()).map(String::from));
             for _ in 0..60 {
-                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                tokio::time::sleep(std::time::Duration::from_millis(500)).await;
                 if let Ok(me) = api::me(&token).await {
                     if let Some(now) = me.get("discord").and_then(|v| v.as_str()) {
                         if Some(now) != before.as_deref() {
@@ -1098,6 +1098,15 @@ async fn process_social_actions() {
             } else if action == "joincheck" {
                 let port: u16 = arg.parse().unwrap_or(0);
                 let win64 = inst.root.join("Propnight/Binaries/Win64");
+                // Proof must land before the game opens the relay, or the door stays shut.
+                if let Ok(me) = api::me(&token).await {
+                    let proof = me.get("proof").and_then(|v| v.as_str()).unwrap_or("");
+                    let relay = std::fs::read_to_string(win64.join("revival-relay.txt")).unwrap_or_default();
+                    let relay = relay.lines().next().unwrap_or("").trim();
+                    if proof.len() >= 32 && !relay.is_empty() {
+                        send_address_proof(relay, proof, port);
+                    }
+                }
                 match api::join_check(&token, port, None).await {
                     Ok(r) if r.get("ok").and_then(|v| v.as_bool()) == Some(false) => {
                         let why = r.get("error").or_else(|| r.get("message")).and_then(|v| v.as_str())
@@ -1107,8 +1116,9 @@ async fn process_social_actions() {
                     Ok(_) => {
                         let _ = std::fs::write(win64.join("revival-map-command.txt"), format!("joinok {port}"));
                     }
-                    Err(e) => {
-                        let _ = std::fs::write(win64.join("revival-map-command.txt"), format!("joinrefused {port} {e}"));
+                    Err(_) => {
+                        // A slow or missing check must not block the join. The relay still decides.
+                        let _ = std::fs::write(win64.join("revival-map-command.txt"), format!("joinok {port}"));
                     }
                 }
             } else if action == "left" {
