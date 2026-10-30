@@ -388,6 +388,18 @@ body.maximized .grip{display:none}
             <div class="link" onclick="send('openData')"><svg viewBox="0 0 24 24"><path d="M14 3h7v7M21 3l-9 9M19 14v5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h5"/></svg>Launcher files &amp; logs</div>
           </div>
         
+    <h3 style="margin-top:18px">Account</h3>
+    <div class="faddrow" style="margin-bottom:8px"><input id="setUser" maxlength="16" placeholder="New username"><button class="btn ghost small" type="button" onclick="send('set_username', { username: $('setUser').value })">Save</button></div>
+    <div class="faddrow" style="margin-bottom:8px"><input id="setPass" type="password" placeholder="New password"><button class="btn ghost small" type="button" onclick="send('set_password', { password: $('setPass').value })">Save</button></div>
+    <div class="faddrow" style="margin-bottom:8px"><input id="setEmail" placeholder="Email"><button class="btn ghost small" type="button" onclick="send('set_email', { email: $('setEmail').value })">Send link</button></div>
+    <div class="faddrow" style="margin-bottom:8px"><input id="emailCode" placeholder="Email code"><button class="btn ghost small" type="button" onclick="send('confirm_email', { code: $('emailCode').value })">Confirm</button></div>
+    <div class="faddrow" style="margin-bottom:8px"><input id="redeemCode" placeholder="Redeem code"><button class="btn ghost small" type="button" onclick="send('redeem', { code: $('redeemCode').value })">Redeem</button></div>
+    <div class="faddrow" style="margin-bottom:8px"><select id="langSel" onchange="send('set_language', { language: this.value })">
+      <option value="en">English</option><option value="fr">Français</option><option value="ru">Русский</option><option value="es">Español</option><option value="de">Deutsch</option>
+    </select></div>
+    <div class="actions"><button class="btn ghost small" type="button" onclick="send('patchnotes')">Patch notes</button>
+      <button class="btn ghost small" type="button" onclick="send('delete_account')">Delete account</button>
+      <button class="btn ghost small" type="button" onclick="send('delete_cancel')">Cancel deletion</button></div>
     <h3 style="margin-top:18px">Progress</h3>
     <p class="sub">Lost your progress, or just starting? One click sets account level 300, every character to level 10 with their perks, and unlocks Clown, Michelle, Shinigami, Stéphane and Fei. Once per account. Skins, coins and ranked MMR are not included.</p>
     <div class="actions"><button type="button" class="btn primary small" id="pgGo" onclick="send('max_progress')">Max out my progress</button></div>
@@ -474,7 +486,8 @@ function applyState(m) {
   if (!m) return;
   debug('state: ' + JSON.stringify(m).slice(0, 300));
   try {
-    if (m.progressMaxed && m.progressMaxed.ok) { const b = $('pgGo'); if (b) { b.disabled = true; b.textContent = 'Progress maxed'; } }
+    if (m.patchnotes) { debug('patchnotes ' + JSON.stringify(m.patchnotes).slice(0, 400)); toast('info', 'Patch notes', 'Loaded'); }
+  if (m.progressMaxed && m.progressMaxed.ok) { const b = $('pgGo'); if (b) { b.disabled = true; b.textContent = 'Progress maxed'; } }
   if (m.toast) toast(m.toast.level || 'info', m.toast.title || '', m.toast.text || '');
     if (m.type === 'state' || m.view || m.play || m.authError !== undefined || m.friends || m.username !== undefined
         || m.server || m.update || m.dlc || m.servers || m.tab || m.discord || m.gameRoot !== undefined) {

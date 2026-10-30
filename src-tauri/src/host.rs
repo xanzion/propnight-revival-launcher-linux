@@ -256,6 +256,15 @@ pub async fn friends_poll(app: AppHandle, etag: Option<String>) -> Result<Value,
     if let Some(inst) = game::detect_install().await.ok().flatten() {
         write_social_file(&inst.root, &resp);
         write_host_and_invites(&inst.root, &resp);
+        if let Some(offer) = resp.get("qpOffer") {
+            let id = offer.get("id").and_then(|v| v.as_str()).unwrap_or("");
+            let ping = offer.get("ping").and_then(|v| v.as_u64()).unwrap_or(0);
+            let players = offer.get("players").and_then(|v| v.as_u64()).unwrap_or(0);
+            let map = offer.get("map").and_then(|v| v.as_str()).unwrap_or("");
+            if !id.is_empty() {
+                let _ = std::fs::write(inst.root.join("Propnight/Binaries/Win64/revival-map-command.txt"), format!("qpoffer {id} {ping} {players} {map}"));
+            }
+        }
     }
     // Flash window on new invite
     if resp.get("invites").and_then(|v| v.as_array()).map(|a| !a.is_empty()).unwrap_or(false) {
@@ -518,6 +527,98 @@ pub async fn max_progress(app: AppHandle) -> Result<Value, String> {
     }
 }
 
+async fn check_ban(app: &AppHandle) {
+    let Some(inst) = game::detect_install().await.ok().flatten() else { return };
+    let path = inst.root.join("Propnight/Binaries/Win64/revival-ban.txt");
+    let Ok(text) = std::fs::read_to_string(&path) else { return };
+    let text = text.trim().to_string();
+    if text.is_empty() { return }
+    let _ = std::fs::remove_file(&path);
+    emit_state(app, json!({ "toast": { "level": "bad", "title": "Account banned", "text": text } }));
+}
+
+fn token_or() -> Result<String, String> {
+    settings::current_token().ok_or("not logged in".into())
+}
+
+#[command]
+pub async fn set_username(app: AppHandle, username: String) -> Result<Value, String> {
+    let r = api::set_username(&token_or()?, &username).await?;
+    emit_state(&app, json!({ "toast": { "level": "good", "title": "Username changed", "text": &username }, "account": r }));
+    Ok(json!({}))
+}
+
+#[command]
+pub async fn set_password(_app: AppHandle, password: String) -> Result<Value, String> {
+    let _ = api::set_password(&token_or()?, &password).await?;
+    Ok(json!({ "toast": { "level": "good", "title": "Password saved", "text": "" } }))
+}
+
+#[command]
+pub async fn set_email(_app: AppHandle, email: String) -> Result<Value, String> {
+    let _ = api::set_email(&token_or()?, &email).await?;
+    Ok(json!({ "toast": { "level": "good", "title": "Check your email", "text": "A confirmation link is on its way." } }))
+}
+
+#[command]
+pub async fn confirm_email(_app: AppHandle, code: String) -> Result<Value, String> {
+    let _ = api::confirm_email(&token_or()?, &code).await?;
+    Ok(json!({ "toast": { "level": "good", "title": "Email confirmed", "text": "" } }))
+}
+
+#[command]
+pub async fn redeem(_app: AppHandle, code: String) -> Result<Value, String> {
+    match api::redeem(&token_or()?, &code).await {
+        Ok(r) => Ok(json!({ "toast": { "level": "good", "title": "Code redeemed", "text": r.get("message").and_then(|v| v.as_str()).unwrap_or("") } })),
+        Err(e) => Ok(json!({ "toast": { "level": "bad", "title": "Could not redeem", "text": e } })),
+    }
+}
+
+#[command]
+pub async fn patchnotes(app: AppHandle) -> Result<Value, String> {
+    let notes = api::patchnotes(&token_or()?).await.unwrap_or(json!({}));
+    emit_state(&app, json!({ "patchnotes": notes }));
+    Ok(json!({ "patchnotes": notes }))
+}
+
+#[command]
+pub async fn warning_seen(_app: AppHandle, id: String) -> Result<Value, String> {
+    let _ = api::warning_seen(&token_or()?, &id).await?;
+    Ok(json!({}))
+}
+
+#[command]
+pub async fn leave_game(_app: AppHandle) -> Result<Value, String> {
+    let _ = api::leave(&token_or()?).await?;
+    Ok(json!({ "toast": { "level": "info", "title": "Left the game", "text": "" } }))
+}
+
+#[command]
+pub async fn delete_account(_app: AppHandle) -> Result<Value, String> {
+    let _ = api::delete_request(&token_or()?).await?;
+    Ok(json!({ "toast": { "level": "warn", "title": "Deletion requested", "text": "The team will delete your account within a month. You can still play, or cancel it here." } }))
+}
+
+#[command]
+pub async fn delete_cancel(_app: AppHandle) -> Result<Value, String> {
+    let _ = api::delete_cancel(&token_or()?).await?;
+    Ok(json!({ "toast": { "level": "good", "title": "Deletion cancelled", "text": "" } }))
+}
+
+#[command]
+pub async fn set_language(_app: AppHandle, language: String) -> Result<Value, String> {
+    let mut s = settings::load_settings().await.unwrap_or_default();
+    s.language = language;
+    settings::save_settings(s).await?;
+    Ok(json!({ "toast": { "level": "good", "title": "Language saved", "text": "Restart the launcher to apply it." } }))
+}
+
+#[command]
+pub async fn quickplay_choice(_app: AppHandle, id: String, choice: String) -> Result<Value, String> {
+    let _ = api::quickplay_choice(&token_or()?, &id, &choice).await?;
+    Ok(json!({}))
+}
+
 #[command]
 pub async fn host_public(app: AppHandle, map: String, role: String) -> Result<Value, String> {
     let install = game::detect_install().await.ok().flatten()
@@ -527,6 +628,16 @@ pub async fn host_public(app: AppHandle, map: String, role: String) -> Result<Va
     let map: String = map.chars().filter(|c| c.is_ascii_alphanumeric()).collect();
     let role = match role.as_str() { "killer" | "survivor" => role.as_str(), _ => "any" };
     if map.is_empty() { return Err("no map".into()); }
+    if let Some(token) = settings::current_token() {
+        match api::host_public(&token, &map, role).await {
+            Ok(r) if r.get("ok").and_then(|v| v.as_bool()) == Some(false) => {
+                let why = r.get("error").or_else(|| r.get("message")).and_then(|v| v.as_str()).unwrap_or("The server refused this game.");
+                return Ok(json!({ "toast": { "level": "warn", "title": "Cannot create a game", "text": why } }));
+            }
+            Err(e) => return Ok(json!({ "toast": { "level": "bad", "title": "Cannot create a game", "text": e } })),
+            _ => {}
+        }
+    }
     let _ = std::fs::write(win64.join("revival-map-command.txt"), format!("hostpublic {map} {role}"));
     let running = std::process::Command::new("pgrep").arg("-f").arg("Propnight.exe").output()
         .map(|o| o.status.success()).unwrap_or(false);
@@ -585,6 +696,16 @@ pub async fn join(app: AppHandle, port: Option<u16>, host: Option<String>, from:
         }
     }
 
+    if let Some(token) = settings::current_token() {
+        match api::join_check(&token, port, host.as_deref()).await {
+            Ok(r) if r.get("ok").and_then(|v| v.as_bool()) == Some(false) => {
+                let why = r.get("error").or_else(|| r.get("message")).and_then(|v| v.as_str()).unwrap_or("The server refused this join.");
+                return Ok(json!({ "toast": { "level": "warn", "title": "Cannot join", "text": why } }));
+            }
+            Err(e) => tracing::warn!("join-check: {e}"),
+            _ => {}
+        }
+    }
     let cmd = match host.as_deref().filter(|h| h.contains('.')) {
         Some(h) => format!("joinrelay {h} {port}"),
         None => format!("joinrelay {port}"),
@@ -987,6 +1108,7 @@ pub async fn start_background(app: AppHandle) {
             push_presence().await;
             process_social_actions().await;
             flush_reports_and_matches().await;
+            check_ban(&app).await;
             // Server status every ~30s, update check every ~60s
             use std::sync::atomic::{AtomicU32, Ordering};
             static COUNTER: AtomicU32 = AtomicU32::new(0);
@@ -1065,6 +1187,17 @@ fn write_social_file(root: &std::path::Path, friends: &Value) {
         }
     }
     let _ = std::fs::write(win64.join("revival-social.txt"), sb);
+    write_game_visibility(root, friends);
+}
+
+fn write_game_visibility(root: &std::path::Path, friends: &Value) {
+    let win64 = root.join("Propnight/Binaries/Win64");
+    let session = friends.pointer("/you/session");
+    let is_public = session.and_then(|s| s.get("visibility")).and_then(|v| v.as_str()) == Some("public")
+        || session.and_then(|s| s.get("public")).and_then(|v| v.as_bool()) == Some(true);
+    let path = win64.join("revival-game.txt");
+    if is_public { let _ = std::fs::write(&path, "public\n"); }
+    else { let _ = std::fs::remove_file(&path); }
 }
 
 fn clean(s: &str) -> String {

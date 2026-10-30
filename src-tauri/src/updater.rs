@@ -37,6 +37,13 @@ pub struct BytePatch {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Manifest {
+    #[serde(default, rename = "gameDlls")]
+    pub game_dlls: serde_json::Value,
+    #[serde(default, rename = "paksAllowed")]
+    pub paks_allowed: Vec<String>,
+    #[serde(default, rename = "modsAllowed")]
+    pub mods_allowed: Vec<String>,
+
     pub version: String,
     #[serde(rename = "filesUrl")]
     pub files_url: String,
@@ -252,6 +259,17 @@ pub async fn check_updates(game_root: String) -> Result<UpdateResult, String> {
     }
 
     crate::game::enable_mods(&root, &manifest.mods_enabled)?;
+    if !manifest.mods_allowed.is_empty() {
+        let mods_dir = root.join("Propnight/Binaries/Win64/Mods");
+        if let Ok(rd) = std::fs::read_dir(&mods_dir) {
+            for ent in rd.flatten() {
+                let name = ent.file_name().to_string_lossy().to_string();
+                if ent.path().is_dir() && !manifest.mods_allowed.iter().any(|m| m == &name) && name != "mods.txt" {
+                    tracing::warn!("mod not in modsAllowed: {name}");
+                }
+            }
+        }
+    }
 
     Ok(UpdateResult {
         up_to_date: todo.is_empty(),

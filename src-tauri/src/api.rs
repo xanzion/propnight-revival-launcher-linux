@@ -152,6 +152,73 @@ pub async fn squad(token: &str, action: &str, username: &str) -> Result<Value, S
     send(&c, Method::POST, &format!("/revival/squad/{action}"), Some(token), Some(body)).await
 }
 
+pub async fn join_check(token: &str, port: u16, host: Option<&str>) -> Result<Value, String> {
+    let c = client()?;
+    let mut body = json!({ "port": port });
+    if let Some(h) = host { body["host"] = json!(h); }
+    send(&c, Method::POST, "/revival/join-check", Some(token), Some(body)).await
+}
+
+pub async fn host_public(token: &str, map: &str, role: &str) -> Result<Value, String> {
+    let c = client()?;
+    send(&c, Method::POST, "/revival/host/public", Some(token), Some(json!({ "map": map, "role": role }))).await
+}
+
+pub async fn quickplay_choice(token: &str, id: &str, choice: &str) -> Result<Value, String> {
+    let c = client()?;
+    send(&c, Method::POST, "/revival/quickplay/choice", Some(token), Some(json!({ "id": id, "choice": choice }))).await
+}
+
+pub async fn warning_seen(token: &str, id: &str) -> Result<Value, String> {
+    let c = client()?;
+    send(&c, Method::POST, "/revival/warning/seen", Some(token), Some(json!({ "id": id }))).await
+}
+
+pub async fn redeem(token: &str, code: &str) -> Result<Value, String> {
+    let c = client()?;
+    send(&c, Method::POST, "/revival/redeem", Some(token), Some(json!({ "code": code }))).await
+}
+
+pub async fn leave(token: &str) -> Result<Value, String> {
+    let c = client()?;
+    send(&c, Method::POST, "/revival/leave", Some(token), Some(json!({}))).await
+}
+
+pub async fn patchnotes(token: &str) -> Result<Value, String> {
+    let c = client()?;
+    send(&c, Method::GET, "/revival/patchnotes", Some(token), None).await
+}
+
+pub async fn set_username(token: &str, username: &str) -> Result<Value, String> {
+    let c = client()?;
+    send(&c, Method::POST, "/revival/account/username", Some(token), Some(json!({ "username": username }))).await
+}
+
+pub async fn set_password(token: &str, password: &str) -> Result<Value, String> {
+    let c = client()?;
+    send(&c, Method::POST, "/revival/account/password", Some(token), Some(json!({ "password": password }))).await
+}
+
+pub async fn set_email(token: &str, email: &str) -> Result<Value, String> {
+    let c = client()?;
+    send(&c, Method::POST, "/revival/account/email", Some(token), Some(json!({ "email": email }))).await
+}
+
+pub async fn confirm_email(token: &str, code: &str) -> Result<Value, String> {
+    let c = client()?;
+    send(&c, Method::POST, "/revival/account/email/confirm", Some(token), Some(json!({ "code": code }))).await
+}
+
+pub async fn delete_request(token: &str) -> Result<Value, String> {
+    let c = client()?;
+    send(&c, Method::POST, "/revival/account/delete-request", Some(token), Some(json!({}))).await
+}
+
+pub async fn delete_cancel(token: &str) -> Result<Value, String> {
+    let c = client()?;
+    send(&c, Method::POST, "/revival/account/delete-cancel", Some(token), Some(json!({}))).await
+}
+
 pub async fn max_progress(token: &str) -> Result<Value, String> {
     let c = client()?;
     send(&c, Method::POST, "/revival/progress/max", Some(token), Some(json!({}))).await

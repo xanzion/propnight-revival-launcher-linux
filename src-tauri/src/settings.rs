@@ -20,7 +20,11 @@ pub struct Settings {
     pub hash_cache: HashMap<String, String>,
     #[serde(default)]
     pub dlc: HashMap<String, bool>,
+    #[serde(default = "default_lang")]
+    pub language: String,
 }
+
+fn default_lang() -> String { "en".into() }
 
 fn settings_path() -> PathBuf {
     directories::ProjectDirs::from("online", "PropnightRevival", "Launcher")
