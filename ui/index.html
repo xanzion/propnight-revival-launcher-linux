@@ -871,10 +871,16 @@ function showTab(t) {
   if (t === 'dlc') send('dlcRefresh');
 }
 // public games (quick play lobbies): roles and ranks of who is in them, never names
+let hostMapChoice = 'BigAbbey';
+let hostRoleChoice = 'any';
 function renderServers(list, err) {
   $('srvCount').textContent = list.length;
   $('srvCount').classList.toggle('on', list.length > 0);
   const panel = $('serversPanel');
+  const prevMap = $('hostMap');
+  const prevRole = $('hostRole');
+  if (prevMap) hostMapChoice = prevMap.value;
+  if (prevRole) hostRoleChoice = prevRole.value;
   panel.innerHTML = '';
   const head = document.createElement('div');
   head.className = 'srvhead';
@@ -891,7 +897,13 @@ function renderServers(list, err) {
       <option value="any">Any role</option><option value="killer">Killer</option><option value="survivor">Survivor</option>
     </select>
     <button class="btn ghost small" type="button">Create a game</button>`;
-  create.querySelector('button').onclick = () => send('host_public', { map: $('hostMap').value, role: $('hostRole').value });
+  const mapSel = create.querySelector('#hostMap');
+  const roleSel = create.querySelector('#hostRole');
+  mapSel.value = hostMapChoice;
+  roleSel.value = hostRoleChoice;
+  mapSel.onchange = () => { hostMapChoice = mapSel.value; };
+  roleSel.onchange = () => { hostRoleChoice = roleSel.value; };
+  create.querySelector('button').onclick = () => send('host_public', { map: mapSel.value, role: roleSel.value });
   panel.appendChild(create);
   if (err) {
     const e = document.createElement('div');
