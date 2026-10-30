@@ -256,6 +256,10 @@ body.maximized .grip{display:none}
 .navtab.on .navcount{background:rgba(255,255,255,.28)}
 .srvhead{display:flex;align-items:baseline;justify-content:space-between;margin:2px 4px 12px}
 .srvhead h2{font-size:20px;margin:0}.srvhead small{color:var(--faint)}
+.hostrow{display:flex;gap:8px;align-items:center;margin:0 0 14px}
+.hostrow select{flex:1;min-width:0;padding:8px 12px;border-radius:999px;border:1px solid var(--line);background:#161a28;color:#f4f2ef;cursor:pointer;pointer-events:auto;user-select:auto;appearance:auto}
+.hostrow select option{background:#161a28;color:#f4f2ef}
+.hostrow .btn{flex:none}
 .srv{display:flex;align-items:center;gap:16px;padding:14px 16px;margin-bottom:10px}
 .srv .sinfo{flex:1;min-width:0}
 .srv .sinfo b{font-size:15.5px}
@@ -861,13 +865,12 @@ function renderServers(list, err) {
   head.querySelector('small').textContent = err ? 'error' : (list.length ? `${list.length} game${list.length === 1 ? '' : 's'} · updated live` : 'updated live');
   panel.appendChild(head);
   const create = document.createElement('div');
-  create.className = 'faddrow';
-  create.style.margin = '8px 0 12px';
-  create.innerHTML = `<select id="hostMap" style="flex:1;padding:7px 10px;border-radius:999px;border:1px solid var(--line);background:rgba(0,0,0,.28);color:inherit">
+  create.className = 'hostrow';
+  create.innerHTML = `<select id="hostMap">
       <option value="BigAbbey">Abbey</option><option value="BigFarm">Farm (Night)</option><option value="BigEgypt">Egypt</option>
       <option value="School">School</option><option value="MansionReborn">House</option><option value="SnowMain">Fantasticville</option>
     </select>
-    <select id="hostRole" style="padding:7px 10px;border-radius:999px;border:1px solid var(--line);background:rgba(0,0,0,.28);color:inherit">
+    <select id="hostRole">
       <option value="any">Any role</option><option value="killer">Killer</option><option value="survivor">Survivor</option>
     </select>
     <button class="btn ghost small" type="button">Create a game</button>`;

@@ -17,6 +17,8 @@ pub struct ManifestFile {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ExePatch {
     pub path: String,
+    #[serde(default, rename = "originalSha256")]
+    pub original_sha256: Option<String>,
     #[serde(rename = "patchedSha256")]
     pub patched_sha256: String,
     #[serde(rename = "acceptedSha256")]
@@ -203,7 +205,13 @@ pub async fn check_updates(game_root: String) -> Result<UpdateResult, String> {
         }
     }
 
-    if todo.is_empty() && manifest.exe_patch.is_none() {
+    let mut patched = false;
+    if let Some(patch) = &manifest.exe_patch {
+        patched = apply_exe_patch(&root, patch)?;
+    }
+    ensure_manifest_file(&client, &root, &manifest, "Propnight/Content/Paks/Propnight-WindowsNoEditor_RevivalFixes_P.pak").await?;
+
+    if todo.is_empty() && !patched {
         return Ok(UpdateResult {
             up_to_date: true,
             files_changed: 0,
@@ -222,10 +230,6 @@ pub async fn check_updates(game_root: String) -> Result<UpdateResult, String> {
             std::fs::remove_file(&path).map_err(|e| e.to_string())?;
         }
         std::fs::rename(&tmp, &path).map_err(|e| e.to_string())?;
-    }
-
-    if let Some(patch) = &manifest.exe_patch {
-        apply_exe_patch(&root, patch)?;
     }
 
     // Explicitly ensure Goldberg steam_api64.dll is present and correct.
@@ -251,8 +255,8 @@ pub async fn check_updates(game_root: String) -> Result<UpdateResult, String> {
 
     Ok(UpdateResult {
         up_to_date: todo.is_empty(),
-        files_changed: todo.len() as u32,
-        message: format!("Updated {} file(s) to manifest {}", todo.len(), manifest.version),
+        files_changed: todo.len() as u32 + if patched { 1 } else { 0 },
+        message: format!("Updated {} file(s){} to manifest {}", todo.len(), if patched { " and Propnight.exe" } else { "" }, manifest.version),
         version: Some(manifest.version),
     })
 }
@@ -262,7 +266,7 @@ pub async fn check_updates(game_root: String) -> Result<UpdateResult, String> {
 pub async fn install_dlc(game_root: &str, dlc_id: &str, app: &tauri::AppHandle) -> Result<u32, String> {
     let client = Client::builder()
         .user_agent("PropnightRevivalLauncher/linux")
-        .timeout(std::time::Duration::from_secs(300))
+        .timeout(std::time::Duration::from_secs(3600))
         .build()
         .map_err(|e| e.to_string())?;
     let manifest = load_manifest(&client).await?;
@@ -310,16 +314,48 @@ pub async fn install_dlc(game_root: &str, dlc_id: &str, app: &tauri::AppHandle) 
     Ok(done)
 }
 
-fn apply_exe_patch(root: &Path, patch: &ExePatch) -> Result<(), String> {
+/// Download a manifest file if it is missing or the hash differs. No-op if absent from the manifest.
+async fn ensure_manifest_file(client: &Client, root: &Path, manifest: &Manifest, relative: &str) -> Result<(), String> {
+    let Some(f) = manifest.files.iter().find(|f| f.path.replace('\\', "/") == relative) else { return Ok(()) };
+    let path = local_path(root, relative)?;
+    let ok = path.exists()
+        && std::fs::metadata(&path).map(|m| m.len() == f.size).unwrap_or(false)
+        && sha256_file(&path).map(|h| h == f.sha256).unwrap_or(false);
+    if ok { return Ok(()) }
+    let tmp = path.with_extension("download");
+    let url = format!("{}{}", manifest.files_url, f.sha256);
+    download_file(client, &url, &tmp, &f.sha256).await?;
+    backup(root, relative)?;
+    if path.exists() { std::fs::remove_file(&path).ok(); }
+    std::fs::rename(&tmp, &path).map_err(|e| e.to_string())?;
+    tracing::info!("installed {relative}");
+    Ok(())
+}
+
+/// Apply the signed exe patch. Returns true if the file was rewritten.
+/// A new patch set is applied even when the exe was patched before: restore the
+/// backed-up original first so the new bytes land on a known base.
+fn apply_exe_patch(root: &Path, patch: &ExePatch) -> Result<bool, String> {
     let exe = local_path(root, &patch.path)?;
     if !exe.exists() {
         return Err("Propnight.exe not found".into());
     }
     let current_sha = sha256_file(&exe)?;
     if current_sha == patch.patched_sha256 {
-        return Ok(());
+        return Ok(false);
     }
-    if !patch.accepted_sha256.iter().any(|s| s == &current_sha) {
+    let original_sha = patch.original_sha256.clone().unwrap_or_default();
+    if current_sha != original_sha {
+        let backup = root.join("revival-backups").join(patch.path.replace('/', std::path::MAIN_SEPARATOR_STR));
+        if backup.exists() {
+            std::fs::copy(&backup, &exe).map_err(|e| format!("restore original exe: {e}"))?;
+        }
+    }
+    let current_sha = sha256_file(&exe)?;
+    if current_sha == patch.patched_sha256 {
+        return Ok(false);
+    }
+    if !patch.accepted_sha256.iter().any(|s| s == &current_sha) && current_sha != original_sha {
         return Err("Propnight.exe is not a known Steam build. Verify game files in Steam, then retry.".into());
     }
     let mut bytes = std::fs::read(&exe).map_err(|e| e.to_string())?;
@@ -349,5 +385,6 @@ fn apply_exe_patch(root: &Path, patch: &ExePatch) -> Result<(), String> {
     std::fs::write(&tmp, &bytes).map_err(|e| e.to_string())?;
     std::fs::remove_file(&exe).map_err(|e| e.to_string())?;
     std::fs::rename(&tmp, &exe).map_err(|e| e.to_string())?;
-    Ok(())
+    tracing::info!("Propnight.exe patched to {}", patch.patched_sha256);
+    Ok(true)
 }
