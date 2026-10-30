@@ -503,3 +503,41 @@ fn home_dir() -> Option<PathBuf> {
 fn data_dir() -> Option<PathBuf> {
     directories::BaseDirs::new().map(|b| b.data_dir().to_path_buf())
 }
+
+
+/// Start RevivalRelay.exe under Proton so a hosted game is reachable.
+/// The mod's Windows `start` does not work on Linux.
+pub fn start_relay(root: &str, map: &str, visibility: &str) -> Result<(), String> {
+    let root = PathBuf::from(root);
+    let exe = root.join("Propnight/Binaries/Win64/RevivalRelay/RevivalRelay.exe");
+    if !exe.exists() { return Err("RevivalRelay.exe missing".into()); }
+    if Command::new("pgrep").args(["-f", "RevivalRelay.exe"]).output().map(|o| o.status.success()).unwrap_or(false) {
+        return Ok(());
+    }
+    let win64 = root.join("Propnight/Binaries/Win64");
+    let alive = win64.join("revival-hosting.txt");
+    let _ = std::fs::write(&alive, "1");
+    let steam_id = std::fs::read_to_string(root.join("Engine/Binaries/ThirdParty/Steamworks/Steamv147/Win64/steam_settings/force_steamid.txt"))
+        .unwrap_or_default();
+    let steam_id = steam_id.trim();
+    let mut args = vec![
+        "--api".into(), "https://api.propnightrevival.online".into(),
+        "--name".into(), "Propnight".into(),
+        "--map".into(), map.to_string(),
+        "--alive-file".into(), alive.to_string_lossy().to_string(),
+        "--visibility".into(), visibility.to_string(),
+    ];
+    if !steam_id.is_empty() { args.push("--steam".into()); args.push(steam_id.into()); }
+    let proton = find_proton_public().ok_or("Proton not found")?;
+    let compat = steam_candidates().into_iter().find_map(|s| {
+        let p = s.join("steamapps/compatdata/1549180");
+        if p.exists() { Some(p) } else { None }
+    });
+    let mut cmd = Command::new(&proton);
+    if let Some(c) = compat { cmd.env("STEAM_COMPAT_DATA_PATH", c); }
+    cmd.env("STEAM_COMPAT_CLIENT_INSTALL_PATH", find_steam().unwrap_or_default());
+    cmd.arg("run").arg(&exe).args(&args);
+    cmd.spawn().map_err(|e| format!("failed to start relay: {e}"))?;
+    tracing::info!("started RevivalRelay for {map} ({visibility})");
+    Ok(())
+}

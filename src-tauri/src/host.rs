@@ -652,6 +652,7 @@ pub async fn host_public(app: AppHandle, map: String, role: String) -> Result<Va
         }
     }
     let _ = std::fs::write(win64.join("revival-map-command.txt"), format!("hostpublic {map} {role}"));
+    let _ = crate::game::start_relay(&install.root.to_string_lossy(), &map, "public");
     let running = std::process::Command::new("pgrep").arg("-f").arg("Propnight.exe").output()
         .map(|o| o.status.success()).unwrap_or(false);
     if running {
@@ -718,6 +719,9 @@ pub async fn join(app: AppHandle, port: Option<u16>, host: Option<String>, from:
             Err(e) => tracing::warn!("join-check: {e}"),
             _ => {}
         }
+    }
+    if let Some(h) = host.as_deref().filter(|h| h.contains('.')) {
+        remember_join(h, port);
     }
     let cmd = match host.as_deref().filter(|h| h.contains('.')) {
         Some(h) => format!("joinrelay {h} {port}"),
@@ -1098,13 +1102,16 @@ async fn process_social_actions() {
             } else if action == "joincheck" {
                 let port: u16 = arg.parse().unwrap_or(0);
                 let win64 = inst.root.join("Propnight/Binaries/Win64");
-                // Proof must land before the game opens the relay, or the door stays shut.
+                // Proof must hit the relay the game is about to open, not only our own region.
                 if let Ok(me) = api::me(&token).await {
                     let proof = me.get("proof").and_then(|v| v.as_str()).unwrap_or("");
-                    let relay = std::fs::read_to_string(win64.join("revival-relay.txt")).unwrap_or_default();
-                    let relay = relay.lines().next().unwrap_or("").trim();
-                    if proof.len() >= 32 && !relay.is_empty() {
-                        send_address_proof(relay, proof, port);
+                    let proof_port = me.get("proofPort").and_then(|v| v.as_u64()).unwrap_or(port as u64) as u16;
+                    let own = std::fs::read_to_string(win64.join("revival-relay.txt")).unwrap_or_default();
+                    let own = own.lines().next().unwrap_or("").trim().to_string();
+                    let target = last_join().map(|(h, _)| h).unwrap_or(own.clone());
+                    if proof.len() >= 32 && !target.is_empty() {
+                        send_address_proof(&target, proof, proof_port);
+                        send_address_proof(&target, proof, port);
                     }
                 }
                 match api::join_check(&token, port, None).await {
@@ -1131,6 +1138,14 @@ async fn process_social_actions() {
 }
 
 /// Send UDP address proof so private games accept this client.
+fn remember_join(host: &str, port: u16) {
+    if let Ok(mut g) = LAST_JOIN.lock() { *g = Some((host.to_string(), port)); }
+}
+fn last_join() -> Option<(String, u16)> {
+    LAST_JOIN.lock().ok().and_then(|g| g.clone())
+}
+static LAST_JOIN: std::sync::Mutex<Option<(String, u16)>> = std::sync::Mutex::new(None);
+
 fn send_address_proof(relay_host: &str, proof: &str, port: u16) {
     use std::net::UdpSocket;
     if proof.len() < 32 { return }
