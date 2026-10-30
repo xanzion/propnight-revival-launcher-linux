@@ -1107,16 +1107,32 @@ async fn process_social_actions() {
             } else if action == "joincheck" {
                 let port: u16 = arg.parse().unwrap_or(0);
                 let win64 = inst.root.join("Propnight/Binaries/Win64");
-                // Answer first. The mod gives up after 4 seconds.
-                let _ = std::fs::write(win64.join("revival-map-command.txt"), format!("joinok {port}"));
-                tracing::info!("joinok {port}");
+                let own = std::fs::read_to_string(win64.join("revival-relay.txt")).unwrap_or_default();
+                let own = own.lines().next().unwrap_or("").trim().to_string();
+                let target = last_join().map(|(h, _)| h).filter(|h| h.contains('.')).unwrap_or(own);
+                // Proof has to land before the game opens the relay.
                 if let Some((proof, proof_port)) = cached_proof() {
-                    let own = std::fs::read_to_string(win64.join("revival-relay.txt")).unwrap_or_default();
-                    let own = own.lines().next().unwrap_or("").trim().to_string();
-                    let target = last_join().map(|(h, _)| h).unwrap_or(own);
                     if !target.is_empty() {
-                        send_address_proof(&target, &proof, proof_port);
-                        send_address_proof(&target, &proof, port);
+                        for _ in 0..3 {
+                            send_address_proof(&target, &proof, proof_port);
+                            send_address_proof(&target, &proof, port);
+                        }
+                        tracing::info!("address proof sent to {target}:{port}");
+                    }
+                } else {
+                    tracing::warn!("joincheck {port}: no cached address proof");
+                }
+                // A started match is refused here so the mod stays in the menu with a reason.
+                match api::join_check(&token, port, Some(&target)).await {
+                    Ok(r) if r.get("ok").and_then(|v| v.as_bool()) == Some(false) => {
+                        let why = r.get("error").or_else(|| r.get("message")).and_then(|v| v.as_str())
+                            .unwrap_or("This game has already started.").replace('\n', " ");
+                        let _ = std::fs::write(win64.join("revival-map-command.txt"), format!("joinrefused {port} {why}"));
+                        tracing::info!("joinrefused {port}: {why}");
+                    }
+                    _ => {
+                        let _ = std::fs::write(win64.join("revival-map-command.txt"), format!("joinok {port}"));
+                        tracing::info!("joinok {port} -> {target}");
                     }
                 }
             } else if action == "left" {
