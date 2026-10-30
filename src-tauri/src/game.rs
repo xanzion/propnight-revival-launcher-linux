@@ -62,21 +62,26 @@ fn parse_libraryfolders(vdf: &Path) -> Vec<PathBuf> {
 
 #[command]
 pub async fn detect_install() -> Result<Option<GameInstall>, String> {
+    let mut first: Option<GameInstall> = None;
     for steam in steam_candidates() {
         let mut libraries = vec![steam.clone()];
         libraries.extend(parse_libraryfolders(&steam.join("steamapps/libraryfolders.vdf")));
         for lib in libraries {
             let root = lib.join("steamapps/common/Propnight");
-            if is_game_root(&root) {
-                return Ok(Some(GameInstall {
-                    exe: root.join(EXE_RELATIVE),
-                    root,
-                    valid: true,
-                }));
+            if !is_game_root(&root) { continue; }
+            let inst = GameInstall { exe: root.join(EXE_RELATIVE), root: root.clone(), valid: true };
+            let win64 = root.join("Propnight/Binaries/Win64");
+            // The copy the game is using has the live command or social file.
+            if win64.join("revival-social-actions.txt").exists()
+                || win64.join("revival-social-actions.taken").exists()
+                || win64.join("revival-map-command.txt").exists()
+            {
+                return Ok(Some(inst));
             }
+            if first.is_none() { first = Some(inst); }
         }
     }
-    Ok(None)
+    Ok(first)
 }
 
 pub fn enable_mods(root: &Path, mods: &[String]) -> Result<(), String> {

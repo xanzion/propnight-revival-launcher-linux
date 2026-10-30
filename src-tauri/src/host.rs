@@ -1174,6 +1174,13 @@ fn send_address_proof(relay_host: &str, proof: &str, port: u16) {
 
 /// Background maintenance: presence, social actions, periodic status.
 pub async fn start_background(app: AppHandle) {
+    // Join answers must not wait behind presence or any other network call.
+    tokio::spawn(async move {
+        loop {
+            process_social_actions().await;
+            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        }
+    });
     tokio::spawn(async move {
         loop {
             push_presence().await;
