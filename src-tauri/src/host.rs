@@ -241,6 +241,7 @@ fn write_host_and_invites(root: &std::path::Path, friends: &Value) {
             if (7800..=8999).contains(&port) && !from.is_empty() {
                 let name: String = from.chars().filter(|c| c.is_ascii_alphanumeric() || *c == '_' || *c == '-').collect();
                 let map_s: String = map.chars().filter(|c| c.is_ascii_alphanumeric() || *c == ' ' || *c == '(' || *c == ')').collect();
+                if host.contains('.') { remember_join(host, port as u16); }
                 let line = if host.contains('.') {
                     format!("invite {port} {} {players} {name}|{map_s}|{host}", if dlc { 1 } else { 0 })
                 } else {
@@ -368,6 +369,10 @@ pub async fn play(app: AppHandle) -> Result<Value, String> {
             let _ = std::fs::create_dir_all(&win64);
             let _ = std::fs::write(win64.join("revival-relay.txt"), host);
         }
+        if let (Some(proof), Some(pp)) = (
+            me.get("proof").and_then(|v| v.as_str()),
+            me.get("proofPort").and_then(|v| v.as_u64()),
+        ) { cache_proof(proof, pp as u16); }
     }
     // pending join is handled by the join command writing the file before calling play
 
@@ -1102,30 +1107,16 @@ async fn process_social_actions() {
             } else if action == "joincheck" {
                 let port: u16 = arg.parse().unwrap_or(0);
                 let win64 = inst.root.join("Propnight/Binaries/Win64");
-                // Proof must hit the relay the game is about to open, not only our own region.
-                if let Ok(me) = api::me(&token).await {
-                    let proof = me.get("proof").and_then(|v| v.as_str()).unwrap_or("");
-                    let proof_port = me.get("proofPort").and_then(|v| v.as_u64()).unwrap_or(port as u64) as u16;
+                // Answer first. The mod gives up after 4 seconds.
+                let _ = std::fs::write(win64.join("revival-map-command.txt"), format!("joinok {port}"));
+                tracing::info!("joinok {port}");
+                if let Some((proof, proof_port)) = cached_proof() {
                     let own = std::fs::read_to_string(win64.join("revival-relay.txt")).unwrap_or_default();
                     let own = own.lines().next().unwrap_or("").trim().to_string();
-                    let target = last_join().map(|(h, _)| h).unwrap_or(own.clone());
-                    if proof.len() >= 32 && !target.is_empty() {
-                        send_address_proof(&target, proof, proof_port);
-                        send_address_proof(&target, proof, port);
-                    }
-                }
-                match api::join_check(&token, port, None).await {
-                    Ok(r) if r.get("ok").and_then(|v| v.as_bool()) == Some(false) => {
-                        let why = r.get("error").or_else(|| r.get("message")).and_then(|v| v.as_str())
-                            .unwrap_or("This game has already started.").replace('\n', " ");
-                        let _ = std::fs::write(win64.join("revival-map-command.txt"), format!("joinrefused {port} {why}"));
-                    }
-                    Ok(_) => {
-                        let _ = std::fs::write(win64.join("revival-map-command.txt"), format!("joinok {port}"));
-                    }
-                    Err(_) => {
-                        // A slow or missing check must not block the join. The relay still decides.
-                        let _ = std::fs::write(win64.join("revival-map-command.txt"), format!("joinok {port}"));
+                    let target = last_join().map(|(h, _)| h).unwrap_or(own);
+                    if !target.is_empty() {
+                        send_address_proof(&target, &proof, proof_port);
+                        send_address_proof(&target, &proof, port);
                     }
                 }
             } else if action == "left" {
@@ -1137,7 +1128,26 @@ async fn process_social_actions() {
     let _ = std::fs::remove_file(&taken);
 }
 
+/// If the mod started a host, make sure RevivalRelay is running.
+async fn ensure_host_relay() {
+    let install = game::detect_install().await.ok().flatten();
+    let Some(inst) = install else { return };
+    let alive = inst.root.join("Propnight/Binaries/Win64/revival-hosting.txt");
+    if !alive.exists() { return }
+    let _ = crate::game::start_relay(&inst.root.to_string_lossy(), "game", "public");
+}
+
 /// Send UDP address proof so private games accept this client.
+fn cache_proof(proof: &str, port: u16) {
+    if proof.len() >= 32 {
+        if let Ok(mut g) = PROOF.lock() { *g = Some((proof.to_string(), port)); }
+    }
+}
+fn cached_proof() -> Option<(String, u16)> {
+    PROOF.lock().ok().and_then(|g| g.clone())
+}
+static PROOF: std::sync::Mutex<Option<(String, u16)>> = std::sync::Mutex::new(None);
+
 fn remember_join(host: &str, port: u16) {
     if let Ok(mut g) = LAST_JOIN.lock() { *g = Some((host.to_string(), port)); }
 }
@@ -1168,6 +1178,17 @@ pub async fn start_background(app: AppHandle) {
         loop {
             push_presence().await;
             process_social_actions().await;
+            ensure_host_relay().await;
+            if cached_proof().is_none() {
+                if let Some(token) = settings::current_token() {
+                    if let Ok(me) = api::me(&token).await {
+                        if let (Some(proof), Some(pp)) = (
+                            me.get("proof").and_then(|v| v.as_str()),
+                            me.get("proofPort").and_then(|v| v.as_u64()),
+                        ) { cache_proof(proof, pp as u16); }
+                    }
+                }
+            }
             flush_reports_and_matches().await;
             check_ban(&app).await;
             // Server status every ~30s, update check every ~60s
