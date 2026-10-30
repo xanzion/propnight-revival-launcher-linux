@@ -327,8 +327,21 @@ fn game_running() -> bool {
 /// Launch via Steam so the user's Steam launch options apply
 /// (Proton Experimental, dwmapi=n,b, Propnight.exe instead of _BE).
 /// `on_running` is called once Propnight.exe is seen, so the UI can leave STARTING.
+fn write_launch_stamp(root: &str) {
+    let win64 = PathBuf::from(root).join("Propnight/Binaries/Win64");
+    let _ = std::fs::create_dir_all(&win64);
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let _ = std::fs::write(win64.join("revival-launch.txt"), stamp.to_string());
+}
+
 pub async fn launch_and_wait(root: &str, on_running: impl FnOnce()) -> Result<(), String> {
     deploy_ue4ss_settings(root)?;
+    // New LoginBypasser (2026-10-27+): skip the login screen only if this file
+    // holds a unix time within 120s. Refresh while Steam is starting so it stays fresh.
+    write_launch_stamp(root);
     let steam = find_steam().ok_or(
         "Steam not found. Install Steam and set Propnight's launch options to the working script.",
     )?;
@@ -340,6 +353,7 @@ pub async fn launch_and_wait(root: &str, on_running: impl FnOnce()) -> Result<()
     // steam -applaunch returns immediately. Wait for the game, then for it to exit.
     let mut seen = false;
     for _ in 0..90 {
+        write_launch_stamp(root);
         if game_running() {
             seen = true;
             break;

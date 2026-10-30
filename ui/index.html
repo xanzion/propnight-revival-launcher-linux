@@ -780,7 +780,7 @@ function renderFriends(d) {
     const actions = [];
     // already in the game you are in (you host it, or you both joined it): nothing to join or invite to
     if (f.sameGame) {}
-    else if (f.session && f.session.joinable) actions.push(['Join', 'go', () => send('join', { port: f.session.port, from: f.username, dlc: !!f.session.dlc, map: mapName(f.session.map) })]);
+    else if (f.session && f.session.joinable) actions.push(['Join', 'go', () => send('join', { port: f.session.port, host: f.session.host || f.session.relay, from: f.username, dlc: !!f.session.dlc, map: mapName(f.session.map) })]);
     // one Invite: in a game, to that game (they join it, not your squad); in the menu, to your squad
     // (they follow you into your games)
     else if (f.status !== 'offline' && d.you && d.you.session) actions.push(['Invite', '', act('invite', f.username), 'Invite to your game']);
@@ -860,6 +860,19 @@ function renderServers(list, err) {
   head.innerHTML = '<h2>Public games</h2><small></small>';
   head.querySelector('small').textContent = err ? 'error' : (list.length ? `${list.length} game${list.length === 1 ? '' : 's'} · updated live` : 'updated live');
   panel.appendChild(head);
+  const create = document.createElement('div');
+  create.className = 'faddrow';
+  create.style.margin = '8px 0 12px';
+  create.innerHTML = `<select id="hostMap" style="flex:1;padding:7px 10px;border-radius:999px;border:1px solid var(--line);background:rgba(0,0,0,.28);color:inherit">
+      <option value="BigAbbey">Abbey</option><option value="BigFarm">Farm (Night)</option><option value="BigEgypt">Egypt</option>
+      <option value="School">School</option><option value="MansionReborn">House</option><option value="SnowMain">Fantasticville</option>
+    </select>
+    <select id="hostRole" style="padding:7px 10px;border-radius:999px;border:1px solid var(--line);background:rgba(0,0,0,.28);color:inherit">
+      <option value="any">Any role</option><option value="killer">Killer</option><option value="survivor">Survivor</option>
+    </select>
+    <button class="btn ghost small" type="button">Create a game</button>`;
+  create.querySelector('button').onclick = () => send('host_public', { map: $('hostMap').value, role: $('hostRole').value });
+  panel.appendChild(create);
   if (err) {
     const e = document.createElement('div');
     e.className = 'fempty';
@@ -892,7 +905,7 @@ function renderServers(list, err) {
     btn.textContent = g.mine ? 'Your game' : g.joined ? 'Joined' : open ? 'Join' : g.players >= g.max ? 'Full' : 'Playing';
     btn.className = 'btn ' + (open ? 'primary' : 'ghost');
     btn.disabled = !open;
-    btn.onclick = () => send('join', { port: g.port, from: 'a public game', dlc: !!g.dlc, map: mapName(g.map) });
+    btn.onclick = () => send('join', { port: g.port, host: g.host || g.relay, from: 'a public game', dlc: !!g.dlc, map: mapName(g.map) });
     panel.appendChild(card);
   }
 }

@@ -191,6 +191,46 @@ pub async fn refresh_servers(app: AppHandle) -> Result<Value, String> {
     }
 }
 
+fn write_host_and_invites(root: &std::path::Path, friends: &Value) {
+    let win64 = root.join("Propnight/Binaries/Win64");
+    let _ = std::fs::create_dir_all(&win64);
+    if let Some(order) = friends.get("hostOrder") {
+        let map = order.get("map").and_then(|v| v.as_str()).unwrap_or("");
+        let role = order.get("role").and_then(|v| v.as_str()).unwrap_or("any");
+        let map: String = map.chars().filter(|c| c.is_ascii_alphanumeric()).collect();
+        let role: String = role.chars().filter(|c| c.is_ascii_alphabetic()).collect();
+        if !map.is_empty() {
+            let _ = std::fs::write(win64.join("revival-map-command.txt"), format!("hostpublic {map} {role}"));
+        }
+    }
+    let running = std::process::Command::new("pgrep").arg("-f").arg("Propnight.exe").output()
+        .map(|o| o.status.success()).unwrap_or(false);
+    if !running { return; }
+    if let Some(invites) = friends.get("invites").and_then(|v| v.as_array()) {
+        if let Some(invite) = invites.last() {
+            let from = invite.get("from").and_then(|v| v.as_str()).unwrap_or("");
+            let session = invite.get("session");
+            let port = session.and_then(|s| s.get("port")).and_then(|v| v.as_u64()).unwrap_or(0);
+            let players = session.and_then(|s| s.get("players")).and_then(|v| v.as_u64()).unwrap_or(0);
+            let dlc = session.and_then(|s| s.get("dlc")).and_then(|v| v.as_bool()).unwrap_or(false);
+            let map = session.and_then(|s| s.get("map")).and_then(|v| v.as_str()).unwrap_or("");
+            let host = session.and_then(|s| s.get("host")).and_then(|v| v.as_str())
+                .or_else(|| session.and_then(|s| s.get("relay")).and_then(|v| v.as_str()))
+                .unwrap_or("");
+            if (7800..=8999).contains(&port) && !from.is_empty() {
+                let name: String = from.chars().filter(|c| c.is_ascii_alphanumeric() || *c == '_' || *c == '-').collect();
+                let map_s: String = map.chars().filter(|c| c.is_ascii_alphanumeric() || *c == ' ' || *c == '(' || *c == ')').collect();
+                let line = if host.contains('.') {
+                    format!("invite {port} {} {players} {name}|{map_s}|{host}", if dlc { 1 } else { 0 })
+                } else {
+                    format!("invite {port} {} {players} {name}|{map_s}", if dlc { 1 } else { 0 })
+                };
+                let _ = std::fs::write(win64.join("revival-map-command.txt"), line);
+            }
+        }
+    }
+}
+
 /// One-shot friends long-poll. UI can call this in a loop.
 #[command]
 pub async fn friends_poll(app: AppHandle, etag: Option<String>) -> Result<Value, String> {
@@ -215,6 +255,7 @@ pub async fn friends_poll(app: AppHandle, etag: Option<String>) -> Result<Value,
     emit_state(&app, state.clone());
     if let Some(inst) = game::detect_install().await.ok().flatten() {
         write_social_file(&inst.root, &resp);
+        write_host_and_invites(&inst.root, &resp);
     }
     // Flash window on new invite
     if resp.get("invites").and_then(|v| v.as_array()).map(|a| !a.is_empty()).unwrap_or(false) {
@@ -453,10 +494,31 @@ pub async fn friend(app: AppHandle, action: String, username: Option<String>, co
 }
 
 #[command]
-pub async fn join(app: AppHandle, port: Option<u16>, from: Option<String>, dlc: Option<bool>, map: Option<String>) -> Result<Value, String> {
+pub async fn host_public(app: AppHandle, map: String, role: String) -> Result<Value, String> {
+    let install = game::detect_install().await.ok().flatten()
+        .ok_or("Game not found")?;
+    let win64 = install.root.join("Propnight/Binaries/Win64");
+    let _ = std::fs::create_dir_all(&win64);
+    let map: String = map.chars().filter(|c| c.is_ascii_alphanumeric()).collect();
+    let role = match role.as_str() { "killer" | "survivor" => role.as_str(), _ => "any" };
+    if map.is_empty() { return Err("no map".into()); }
+    let _ = std::fs::write(win64.join("revival-map-command.txt"), format!("hostpublic {map} {role}"));
+    let running = std::process::Command::new("pgrep").arg("-f").arg("Propnight.exe").output()
+        .map(|o| o.status.success()).unwrap_or(false);
+    if running {
+        return Ok(json!({ "toast": { "level": "info", "title": "Creating a game", "text": format!("Hosting {map} as {role}") } }));
+    }
+    emit_state(&app, json!({ "toast": { "level": "info", "title": "Creating a game", "text": "Propnight starts, then hosts." } }));
+    let _ = play(app).await;
+    Ok(json!({}))
+}
+
+#[command]
+pub async fn join(app: AppHandle, port: Option<u16>, host: Option<String>, from: Option<String>, dlc: Option<bool>, map: Option<String>) -> Result<Value, String> {
     let port = port.unwrap_or(0);
-    if !(7800..=7999).contains(&port) {
-        return Ok(json!({ "toast": { "level": "warn", "title": "Join", "text": "Invalid port" } }));
+    // 7800-7999 Europe; other regions use 8000-8999 (manifest 2026-10-29).
+    if !(7800..=8999).contains(&port) {
+        return Ok(json!({ "toast": { "level": "warn", "title": "Join", "text": format!("Invalid port: {port}. A game needs a relay port 7800-8999.") } }));
     }
 
     // Busy guard
@@ -498,7 +560,10 @@ pub async fn join(app: AppHandle, port: Option<u16>, from: Option<String>, dlc: 
         }
     }
 
-    let cmd = format!("joinrelay {}", port);
+    let cmd = match host.as_deref().filter(|h| h.contains('.')) {
+        Some(h) => format!("joinrelay {h} {port}"),
+        None => format!("joinrelay {port}"),
+    };
     let _ = std::fs::write(win64.join("revival-map-command.txt"), &cmd);
 
     // Already running: just write the command and let the mod connect
