@@ -1095,6 +1095,22 @@ async fn process_social_actions() {
                 let choice = if action == "qpjoin" { "join" } else { "host" };
                 tracing::info!("quick play choice: {choice} {arg}");
                 let _ = api::quickplay_choice(&token, &arg, choice).await;
+            } else if action == "joincheck" {
+                let port: u16 = arg.parse().unwrap_or(0);
+                let win64 = inst.root.join("Propnight/Binaries/Win64");
+                match api::join_check(&token, port, None).await {
+                    Ok(r) if r.get("ok").and_then(|v| v.as_bool()) == Some(false) => {
+                        let why = r.get("error").or_else(|| r.get("message")).and_then(|v| v.as_str())
+                            .unwrap_or("This game has already started.").replace('\n', " ");
+                        let _ = std::fs::write(win64.join("revival-map-command.txt"), format!("joinrefused {port} {why}"));
+                    }
+                    Ok(_) => {
+                        let _ = std::fs::write(win64.join("revival-map-command.txt"), format!("joinok {port}"));
+                    }
+                    Err(e) => {
+                        let _ = std::fs::write(win64.join("revival-map-command.txt"), format!("joinrefused {port} {e}"));
+                    }
+                }
             } else if action == "left" {
                 tracing::info!("match left: {arg}");
                 let _ = api::leave(&token).await;
