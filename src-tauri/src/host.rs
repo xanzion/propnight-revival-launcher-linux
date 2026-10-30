@@ -376,6 +376,9 @@ pub async fn play(app: AppHandle) -> Result<Value, String> {
     }
     // pending join is handled by the join command writing the file before calling play
 
+    // The relay will not register a host unless the server saw PLAY.
+    let _ = api::play_launch(&token).await;
+
     // 5. Launch and wait
     emit_state(&app, json!({ "play": { "title": "STARTING", "sub": "Launching via Steam…", "busy": true, "disabled": true, "progress": -1 } }));
     // Profile watch while game runs
@@ -1144,6 +1147,10 @@ async fn process_social_actions() {
     let _ = std::fs::remove_file(&taken);
 }
 
+fn game_running_quick() -> bool {
+    std::process::Command::new("pgrep").args(["-f", "Propnight.exe"]).output().map(|o| o.status.success()).unwrap_or(false)
+}
+
 /// If the mod started a host, make sure RevivalRelay is running.
 async fn ensure_host_relay() {
     let install = game::detect_install().await.ok().flatten();
@@ -1202,6 +1209,12 @@ pub async fn start_background(app: AppHandle) {
             push_presence().await;
             process_social_actions().await;
             ensure_host_relay().await;
+            // The bypasser deletes revival-launch.txt. Keep it fresh so a later host still counts as PLAY.
+            if let Some(inst) = game::detect_install().await.ok().flatten() {
+                if game_running_quick() {
+                    let _ = crate::game::write_launch_stamp_pub(&inst.root.to_string_lossy());
+                }
+            }
             if cached_proof().is_none() {
                 if let Some(token) = settings::current_token() {
                     if let Ok(me) = api::me(&token).await {

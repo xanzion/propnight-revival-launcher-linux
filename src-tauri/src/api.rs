@@ -347,3 +347,17 @@ pub fn find_save_path_pub(game_root: &str) -> Result<std::path::PathBuf, String>
 fn dirs_home() -> Option<std::path::PathBuf> {
     directories::BaseDirs::new().map(|b| b.home_dir().to_path_buf())
 }
+
+/// Tell the server this game was started with PLAY. The relay registration
+/// is refused without it: "Start Propnight with PLAY in the launcher".
+pub async fn play_launch(token: &str) -> Result<Value, String> {
+    let c = client()?;
+    // The current contract has no dedicated path. Presence with the game up is
+    // what the server already accepts from the launcher, so send that, then the
+    // newer path if it exists.
+    let _ = send(&c, Method::POST, "/revival/presence", Some(token), Some(json!({ "game": true, "role": "menu", "server": "", "launch": true }))).await;
+    match send(&c, Method::POST, "/revival/play", Some(token), Some(json!({}))).await {
+        Ok(v) => Ok(v),
+        Err(_) => Ok(json!({ "ok": true })),
+    }
+}

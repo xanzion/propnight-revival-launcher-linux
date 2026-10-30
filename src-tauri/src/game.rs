@@ -332,6 +332,7 @@ fn game_running() -> bool {
 /// Launch via Steam so the user's Steam launch options apply
 /// (Proton Experimental, dwmapi=n,b, Propnight.exe instead of _BE).
 /// `on_running` is called once Propnight.exe is seen, so the UI can leave STARTING.
+pub fn write_launch_stamp_pub(root: &str) { write_launch_stamp(root); }
 fn write_launch_stamp(root: &str) {
     let win64 = PathBuf::from(root).join("Propnight/Binaries/Win64");
     let _ = std::fs::create_dir_all(&win64);
