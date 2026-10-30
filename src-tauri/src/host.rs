@@ -194,13 +194,34 @@ pub async fn refresh_servers(app: AppHandle) -> Result<Value, String> {
 fn write_host_and_invites(root: &std::path::Path, friends: &Value) {
     let win64 = root.join("Propnight/Binaries/Win64");
     let _ = std::fs::create_dir_all(&win64);
-    if let Some(order) = friends.get("hostOrder") {
+    let order = friends.get("hostOrder").or_else(|| friends.pointer("/you/hostOrder"));
+    if let Some(order) = order {
+        let id = order.get("id").and_then(|v| v.as_str()).unwrap_or("");
         let map = order.get("map").and_then(|v| v.as_str()).unwrap_or("");
         let role = order.get("role").and_then(|v| v.as_str()).unwrap_or("any");
         let map: String = map.chars().filter(|c| c.is_ascii_alphanumeric()).collect();
         let role: String = role.chars().filter(|c| c.is_ascii_alphabetic()).collect();
-        if !map.is_empty() {
+        static LAST: std::sync::Mutex<String> = std::sync::Mutex::new(String::new());
+        let mut last = LAST.lock().unwrap();
+        if !map.is_empty() && !id.is_empty() && *last != id {
+            *last = id.to_string();
             let _ = std::fs::write(win64.join("revival-map-command.txt"), format!("hostpublic {map} {role}"));
+            tracing::info!("quick play: hosting a public game on {map} as {role}");
+            return;
+        }
+    }
+    if let Some(offer) = friends.get("qpOffer").or_else(|| friends.pointer("/you/qpOffer")) {
+        let id = offer.get("id").and_then(|v| v.as_str()).unwrap_or("");
+        let ping = offer.get("ping").and_then(|v| v.as_u64()).unwrap_or(0);
+        let players = offer.get("players").and_then(|v| v.as_u64()).unwrap_or(0);
+        let map = offer.get("map").and_then(|v| v.as_str()).unwrap_or("");
+        static LAST_OFFER: std::sync::Mutex<String> = std::sync::Mutex::new(String::new());
+        let mut last = LAST_OFFER.lock().unwrap();
+        if !id.is_empty() && *last != id {
+            *last = id.to_string();
+            let _ = std::fs::write(win64.join("revival-map-command.txt"), format!("qpoffer {id} {ping} {players} {map}"));
+            tracing::info!("quick play: far game offered ({ping} ms)");
+            return;
         }
     }
     let running = std::process::Command::new("pgrep").arg("-f").arg("Propnight.exe").output()
@@ -256,15 +277,7 @@ pub async fn friends_poll(app: AppHandle, etag: Option<String>) -> Result<Value,
     if let Some(inst) = game::detect_install().await.ok().flatten() {
         write_social_file(&inst.root, &resp);
         write_host_and_invites(&inst.root, &resp);
-        if let Some(offer) = resp.get("qpOffer") {
-            let id = offer.get("id").and_then(|v| v.as_str()).unwrap_or("");
-            let ping = offer.get("ping").and_then(|v| v.as_u64()).unwrap_or(0);
-            let players = offer.get("players").and_then(|v| v.as_u64()).unwrap_or(0);
-            let map = offer.get("map").and_then(|v| v.as_str()).unwrap_or("");
-            if !id.is_empty() {
-                let _ = std::fs::write(inst.root.join("Propnight/Binaries/Win64/revival-map-command.txt"), format!("qpoffer {id} {ping} {players} {map}"));
-            }
-        }
+
     }
     // Flash window on new invite
     if resp.get("invites").and_then(|v| v.as_array()).map(|a| !a.is_empty()).unwrap_or(false) {
@@ -1075,9 +1088,16 @@ async fn process_social_actions() {
         for line in text.lines().take(10) {
             let mut parts = line.trim().splitn(2, ' ');
             let action = parts.next().unwrap_or("").to_lowercase();
-            let username = parts.next().unwrap_or("");
+            let arg = parts.next().unwrap_or("").trim().to_string();
             if ["invite", "accept", "decline", "leave", "kick"].contains(&action.as_str()) {
-                let _ = api::squad(&token, &action, username).await;
+                let _ = api::squad(&token, &action, &arg).await;
+            } else if action == "qpjoin" || action == "qphost" {
+                let choice = if action == "qpjoin" { "join" } else { "host" };
+                tracing::info!("quick play choice: {choice} {arg}");
+                let _ = api::quickplay_choice(&token, &arg, choice).await;
+            } else if action == "left" {
+                tracing::info!("match left: {arg}");
+                let _ = api::leave(&token).await;
             }
         }
     }

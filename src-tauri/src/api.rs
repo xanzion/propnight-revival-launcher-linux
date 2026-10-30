@@ -166,7 +166,8 @@ pub async fn host_public(token: &str, map: &str, role: &str) -> Result<Value, St
 
 pub async fn quickplay_choice(token: &str, id: &str, choice: &str) -> Result<Value, String> {
     let c = client()?;
-    send(&c, Method::POST, "/revival/quickplay/choice", Some(token), Some(json!({ "id": id, "choice": choice }))).await
+    let action = if choice == "join" { "qpjoin" } else { "qphost" };
+    send(&c, Method::POST, "/revival/quickplay/choice", Some(token), Some(json!({ "id": id, "choice": choice, "action": action }))).await
 }
 
 pub async fn warning_seen(token: &str, id: &str) -> Result<Value, String> {
