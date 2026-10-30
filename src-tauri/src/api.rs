@@ -16,7 +16,7 @@ pub struct LoginResponse {
 
 fn client() -> Result<Client, String> {
     Client::builder()
-        .user_agent("PropnightRevivalLauncher/linux")
+        .user_agent("PropnightRevivalLauncher/1.46.8")
         .timeout(std::time::Duration::from_secs(30))
         .build()
         .map_err(|e| e.to_string())

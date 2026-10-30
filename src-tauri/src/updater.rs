@@ -147,7 +147,7 @@ fn is_local_override(path: &str) -> bool {
 
 pub async fn plan_updates(game_root: &str) -> Result<(String, u32), String> {
     let client = Client::builder()
-        .user_agent("PropnightRevivalLauncher/linux")
+        .user_agent("PropnightRevivalLauncher/1.46.8")
         .timeout(std::time::Duration::from_secs(60))
         .build()
         .map_err(|e| e.to_string())?;
@@ -181,7 +181,7 @@ pub async fn plan_updates(game_root: &str) -> Result<(String, u32), String> {
 #[command]
 pub async fn check_updates(game_root: String) -> Result<UpdateResult, String> {
     let client = Client::builder()
-        .user_agent("PropnightRevivalLauncher/linux")
+        .user_agent("PropnightRevivalLauncher/1.46.8")
         .timeout(std::time::Duration::from_secs(60))
         .build()
         .map_err(|e| e.to_string())?;
@@ -283,7 +283,7 @@ pub async fn check_updates(game_root: String) -> Result<UpdateResult, String> {
 /// Download only the files belonging to a DLC pack.
 pub async fn install_dlc(game_root: &str, dlc_id: &str, app: &tauri::AppHandle) -> Result<u32, String> {
     let client = Client::builder()
-        .user_agent("PropnightRevivalLauncher/linux")
+        .user_agent("PropnightRevivalLauncher/1.46.8")
         .timeout(std::time::Duration::from_secs(3600))
         .build()
         .map_err(|e| e.to_string())?;
