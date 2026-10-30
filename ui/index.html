@@ -388,6 +388,9 @@ body.maximized .grip{display:none}
             <div class="link" onclick="send('openData')"><svg viewBox="0 0 24 24"><path d="M14 3h7v7M21 3l-9 9M19 14v5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h5"/></svg>Launcher files &amp; logs</div>
           </div>
         
+    <h3 style="margin-top:18px">Progress</h3>
+    <p class="sub">Lost your progress, or just starting? One click sets account level 300, every character to level 10 with their perks, and unlocks Clown, Michelle, Shinigami, Stéphane and Fei. Once per account. Skins, coins and ranked MMR are not included.</p>
+    <div class="actions"><button type="button" class="btn primary small" id="pgGo" onclick="send('max_progress')">Max out my progress</button></div>
     <div class="actions"><button type="button" class="btn ghost small" onclick="closeSettings()">Close</button></div>
   </div>
 </div>
@@ -471,7 +474,8 @@ function applyState(m) {
   if (!m) return;
   debug('state: ' + JSON.stringify(m).slice(0, 300));
   try {
-    if (m.toast) toast(m.toast.level || 'info', m.toast.title || '', m.toast.text || '');
+    if (m.progressMaxed && m.progressMaxed.ok) { const b = $('pgGo'); if (b) { b.disabled = true; b.textContent = 'Progress maxed'; } }
+  if (m.toast) toast(m.toast.level || 'info', m.toast.title || '', m.toast.text || '');
     if (m.type === 'state' || m.view || m.play || m.authError !== undefined || m.friends || m.username !== undefined
         || m.server || m.update || m.dlc || m.servers || m.tab || m.discord || m.gameRoot !== undefined) {
       render(m);

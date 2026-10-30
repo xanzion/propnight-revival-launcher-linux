@@ -152,6 +152,11 @@ pub async fn squad(token: &str, action: &str, username: &str) -> Result<Value, S
     send(&c, Method::POST, &format!("/revival/squad/{action}"), Some(token), Some(body)).await
 }
 
+pub async fn max_progress(token: &str) -> Result<Value, String> {
+    let c = client()?;
+    send(&c, Method::POST, "/revival/progress/max", Some(token), Some(json!({}))).await
+}
+
 pub async fn discord_link(token: &str) -> Result<Value, String> {
     let c = client()?;
     send(&c, Method::POST, "/revival/discord/link", Some(token), Some(json!({}))).await

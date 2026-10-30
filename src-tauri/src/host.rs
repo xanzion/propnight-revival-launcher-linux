@@ -310,6 +310,11 @@ pub async fn play(app: AppHandle) -> Result<Value, String> {
     // 1. Install / update revival files (required, same as original)
     emit_state(&app, json!({ "play": { "title": "UPDATING", "sub": "Checking revival files…", "busy": true, "disabled": true, "progress": -1 } }));
     let update = updater::check_updates(root.clone()).await;
+    // New classic-map paks only arrive if we re-sync an already-installed pack.
+    if s.dlc.get("classic-maps").copied().unwrap_or(false) {
+        emit_state(&app, json!({ "play": { "title": "UPDATING", "sub": "Checking classic maps…", "busy": true, "disabled": true, "progress": -1 } }));
+        let _ = updater::install_dlc(&root, "classic-maps", &app).await;
+    }
     let update_msg = match &update {
         Ok(u) if !u.up_to_date => format!("Updated {} files", u.files_changed),
         Ok(_) => "Up to date".into(),
@@ -491,6 +496,26 @@ pub async fn friend(app: AppHandle, action: String, username: Option<String>, co
     });
     emit_state(&app, state.clone());
     Ok(state)
+}
+
+#[command]
+pub async fn max_progress(app: AppHandle) -> Result<Value, String> {
+    let token = settings::current_token().ok_or("not logged in")?;
+    if game::detect_install().await.ok().flatten().is_some() {
+        let running = std::process::Command::new("pgrep").arg("-f").arg("Propnight.exe").output()
+            .map(|o| o.status.success()).unwrap_or(false);
+        if running {
+            return Ok(json!({ "toast": { "level": "warn", "title": "Close Propnight first", "text": "Your game is running. Close it, then max out your progress." }, "progressMaxed": { "ok": false, "running": true } }));
+        }
+    }
+    match api::max_progress(&token).await {
+        Ok(r) => {
+            let at = r.get("at").cloned().unwrap_or(json!(true));
+            emit_state(&app, json!({ "progressMaxed": { "ok": true, "at": at }, "toast": { "level": "good", "title": "Progress maxed out", "text": "Level 300, every character at level 10, and the locked characters are unlocked." } }));
+            Ok(json!({ "progressMaxed": { "ok": true, "at": at } }))
+        }
+        Err(e) => Ok(json!({ "toast": { "level": "bad", "title": "Could not max progress", "text": e }, "progressMaxed": { "ok": false } })),
+    }
 }
 
 #[command]

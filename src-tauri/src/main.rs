@@ -48,6 +48,7 @@ fn main() {
             host::friend,
             host::join,
             host::host_public,
+            host::max_progress,
             host::servers_tab,
             host::page_error,
             host::pick_folder,
